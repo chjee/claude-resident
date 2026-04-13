@@ -203,14 +203,14 @@ recent.md는 50줄 이내로 유지.
 
 ### claude-resident 스크립트
 
-`<name> [start|stop|restart|status|shutdown]` 형식으로 인스턴스별 관리. 전체 코드: `drafts/claude-resident`
+`<name> [start|stop|restart|status|shutdown]` 형식으로 인스턴스별 관리. 전체 코드: `claude-resident`
 
 ```
 claude-resident andy start 동작:
 1. 기존 tmux 세션(claude-resident-andy) 존재 여부 확인
 2. omx-bridge/.env 에서 TELEGRAM_BOT_TOKEN, TELEGRAM_NOTIFY_CHAT_ID 로드
 3. tmux 세션에서 claude --channels ... 실행
-   (로그: ~/.local/state/claude-resident/andy/agent.log)
+   (로그: ~/.config/claude-resident/andy/agent.log)
 4. 백그라운드에서 5초 후 __STARTUP__ 메시지를 Telegram Bot API로 전송
 ```
 
@@ -218,11 +218,11 @@ claude-resident andy start 동작:
 
 ```bash
 # 설치
-cp drafts/claude-resident ~/.local/bin/claude-resident
+cp claude-resident ~/.local/bin/claude-resident
 chmod +x ~/.local/bin/claude-resident
 ln -s ~/.local/bin/claude-resident ~/.local/bin/cr   # 별칭
 
-cp drafts/claude-resident@.service ~/.config/systemd/user/
+cp claude-resident@.service ~/.config/systemd/user/
 systemctl --user daemon-reload
 systemctl --user enable --now claude-resident@andy.service
 ```
@@ -249,7 +249,7 @@ Claude Code는 자동 압축만 있고 직접 제어 불가.
 
 | 레이어 | 방법 | 역할 |
 |--------|------|------|
-| 기본 | `andy-restart.timer` 매일 새벽 6시 | compaction 자체 예방 |
+| 기본 | `claude-resident-restart@.timer` 매일 새벽 6시 | compaction 자체 예방 |
 | 운영 | 이벤트마다 `recent.md` 갱신 | 재시작 후 복원 품질 보장 |
 | 예외 | Claude 자가 경고 → 수동 재시작 | 예상치 못한 급증 대응 |
 
@@ -259,15 +259,15 @@ best-effort이므로 두 가지 모두 운영해야 효과가 있다.
 
 배포:
 ```bash
-cp drafts/claude-resident-restart@.timer ~/.config/systemd/user/
-cp drafts/claude-resident-restart@.service ~/.config/systemd/user/
+cp claude-resident-restart@.timer ~/.config/systemd/user/
+cp claude-resident-restart@.service ~/.config/systemd/user/
 systemctl --user daemon-reload
 systemctl --user enable claude-resident-restart@andy.timer
 ```
 
 ### __STARTUP__ 트리거 방식
 
-**임시안 (현재 설계):** `start-andy.sh`가 Telegram Bot API로 직접 전송
+**임시안 (현재 설계):** `claude-resident`가 Telegram Bot API로 직접 전송
 - 장점: 별도 컴포넌트 불필요, 구현 즉시 가능
 - 한계: polling 시작 전 도착 시 유실 가능, 운영/시스템 신호가 사용자 채팅과 같은 채널에 섞임
 
@@ -399,11 +399,11 @@ sed -i "s/<name>/$NAME/g" ~/.config/claude-resident/$NAME/CLAUDE.md
     claude-resident-restart@.service   → ~/.config/systemd/user/
     CLAUDE.md                          → ~/.config/claude-resident/<name>/CLAUDE.md
     memory/
-        soul.md            → ~/.config/claude-resident/<name>/memory/soul.md
-        user.md            → ~/.config/claude-resident/<name>/memory/user.md
-        workflow.md        → ~/.config/claude-resident/<name>/memory/workflow.md
-        projects.md        → ~/.config/claude-resident/<name>/memory/projects.md
-        recent.md          → ~/.config/claude-resident/<name>/memory/recent.md
+        soul.md.example    → ~/.config/claude-resident/<name>/memory/soul.md
+        user.md.example    → ~/.config/claude-resident/<name>/memory/user.md
+        workflow.md.example → ~/.config/claude-resident/<name>/memory/workflow.md
+        projects.md.example → ~/.config/claude-resident/<name>/memory/projects.md
+        recent.md.example  → ~/.config/claude-resident/<name>/memory/recent.md
 ```
 
 **서비스 관리 명령어 (andy 인스턴스 기준):**
@@ -418,7 +418,7 @@ systemctl --user restart claude-resident@andy
 
 # 로그
 journalctl --user -u claude-resident@andy -f
-tail -f ~/.local/state/claude-resident/andy/agent.log
+tail -f ~/.config/claude-resident/andy/agent.log
 ```
 
 ---

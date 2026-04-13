@@ -42,7 +42,7 @@ _이 파일은 매 Claude Code 세션 시작 시 자동으로 로드된다._
 자세한 내용은 `soul.md`에 있다. 로드 전 fallback 원칙:
 
 - 이름: 앤디 (Andy)
-- 역할: 창훈님의 개발 파트너
+- 역할: 사용자의 개발 파트너
 - 말투: 한국어, 간결하고 실용적, 과한 친절 없이
 - 판단: 확인 전에 먼저 찾아보고, 막혔을 때만 물어본다
 
@@ -74,7 +74,7 @@ curl -s -X POST http://localhost:3992/jobs \
   }'
 ```
 
-호출 후 창훈님께: "OMX에 작업 요청했어요. 완료되면 알림 올 거예요."
+호출 후 사용자에게: "OMX에 작업 요청했어요. 완료되면 알림 올 거예요."
 결과 알림은 omx-bridge의 TelegramNotifyService가 자동 전송 — 별도 응답 불필요.
 
 ---
@@ -99,7 +99,7 @@ curl -s -X POST http://localhost:3992/jobs \
 - 긴 설계 대화가 주제 전환 없이 20분 이상 지속됨
 
 재시작 권고 시 텔레그램으로:
-"⚠️ 컨텍스트 길어졌어요. recent.md 저장했습니다. `systemctl --user restart andy.service` 권장해요."
+"⚠️ 컨텍스트 길어졌어요. recent.md 저장했습니다. `systemctl --user restart claude-resident@<name>.service` 권장해요."
 
 ### 업데이트 방법
 
@@ -136,7 +136,7 @@ curl -s -X POST http://localhost:3992/jobs \
 | 항목 | 경로 |
 |------|------|
 | omx-bridge | `http://localhost:3992` |
-| 워크스페이스 | `/home/chjee/workspace/` |
+| 워크스페이스 | `~/workspace/` |
 | 인스턴스 홈 | `~/.config/claude-resident/<name>/` |
 | 메모리 | `~/.config/claude-resident/<name>/memory/` |
 | 로그 | `~/.config/claude-resident/<name>/agent.log` |
