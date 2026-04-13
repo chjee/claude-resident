@@ -203,7 +203,7 @@ recent.md는 50줄 이내로 유지.
 
 ### claude-resident 스크립트
 
-`<name> [start|stop|restart|status|shutdown]` 형식으로 인스턴스별 관리. 전체 코드: `claude-resident`
+`<name> [start|stop|restart|status|shutdown]` 형식으로 인스턴스별 관리. 전체 코드: `drafts/claude-resident`
 
 ```
 claude-resident andy start 동작:
@@ -218,11 +218,11 @@ claude-resident andy start 동작:
 
 ```bash
 # 설치
-cp claude-resident ~/.local/bin/claude-resident
+cp drafts/claude-resident ~/.local/bin/claude-resident
 chmod +x ~/.local/bin/claude-resident
 ln -s ~/.local/bin/claude-resident ~/.local/bin/cr   # 별칭
 
-cp claude-resident@.service ~/.config/systemd/user/
+cp drafts/claude-resident@.service ~/.config/systemd/user/
 systemctl --user daemon-reload
 systemctl --user enable --now claude-resident@andy.service
 ```
@@ -259,8 +259,8 @@ best-effort이므로 두 가지 모두 운영해야 효과가 있다.
 
 배포:
 ```bash
-cp claude-resident-restart@.timer ~/.config/systemd/user/
-cp claude-resident-restart@.service ~/.config/systemd/user/
+cp drafts/claude-resident-restart@.timer ~/.config/systemd/user/
+cp drafts/claude-resident-restart@.service ~/.config/systemd/user/
 systemctl --user daemon-reload
 systemctl --user enable claude-resident-restart@andy.timer
 ```
@@ -285,7 +285,7 @@ curl POST /jobs 실패
     ↓
 앤디: "⚠️ omx-bridge 응답 없음. 수동 확인 필요"
     ↓
-창훈님: systemctl --user restart omx-bridge.service
+사용자: systemctl --user restart omx-bridge.service
     ↓
 재요청
 ```
@@ -320,23 +320,50 @@ curl POST /jobs 실패
 - [ ] claude.ai 구독 상태 확인 (Pro/Max)
 - [ ] 텔레그램 봇 토큰 확인 (`omx-bridge/.env` 재활용)
 
-### Phase 2: 파일 배포
+### Phase 2-A: 신규 설치
 
 ```bash
 NAME=andy  # 인스턴스 이름
 
-# 디렉토리 생성
 mkdir -p ~/.config/claude-resident/$NAME/memory
+
+cp memory/soul.md.example     ~/.config/claude-resident/$NAME/memory/soul.md
+cp memory/user.md.example     ~/.config/claude-resident/$NAME/memory/user.md
+cp memory/workflow.md.example ~/.config/claude-resident/$NAME/memory/workflow.md
+cp memory/projects.md.example ~/.config/claude-resident/$NAME/memory/projects.md
+cp memory/recent.md.example   ~/.config/claude-resident/$NAME/memory/recent.md
+cp CLAUDE.md                  ~/.config/claude-resident/$NAME/CLAUDE.md
+
+# <name> 플레이스홀더 교체
+sed -i "s/<name>/$NAME/g" ~/.config/claude-resident/$NAME/CLAUDE.md
 ```
 
-- [ ] `CLAUDE.md` → `~/.config/claude-resident/$NAME/CLAUDE.md`
-- [ ] `memory/soul.md` → `~/.config/claude-resident/$NAME/memory/soul.md`
-- [ ] `memory/user.md` → `~/.config/claude-resident/$NAME/memory/user.md`
-- [ ] `memory/workflow.md` → `~/.config/claude-resident/$NAME/memory/workflow.md`
-- [ ] `memory/projects.md` → `~/.config/claude-resident/$NAME/memory/projects.md`
-- [ ] `memory/recent.md` → `~/.config/claude-resident/$NAME/memory/recent.md`
+- [ ] `soul.md` / `user.md` 내용 작성 (캐릭터·사용자 정보)
 
-> ⚠️ CLAUDE.md 안의 `<name>` 플레이스홀더를 실제 인스턴스 이름으로 교체할 것
+### Phase 2-B: OpenClaw에서 마이그레이션
+
+```bash
+NAME=andy  # 인스턴스 이름
+OPENCLAW_DIR=~/.openclaw/workspace
+
+mkdir -p ~/.config/claude-resident/$NAME/memory
+
+# 기존 OpenClaw 메모리 이전
+cp $OPENCLAW_DIR/SOUL.md ~/.config/claude-resident/$NAME/memory/soul.md
+cp $OPENCLAW_DIR/USER.md ~/.config/claude-resident/$NAME/memory/user.md
+
+# 최근 맥락 이전 (가장 최신 파일)
+LATEST=$(ls -t $OPENCLAW_DIR/memory/*.md 2>/dev/null | head -1)
+[ -n "$LATEST" ] && cp "$LATEST" ~/.config/claude-resident/$NAME/memory/recent.md
+
+cp memory/workflow.md.example ~/.config/claude-resident/$NAME/memory/workflow.md
+cp memory/projects.md.example ~/.config/claude-resident/$NAME/memory/projects.md
+cp CLAUDE.md                  ~/.config/claude-resident/$NAME/CLAUDE.md
+
+sed -i "s/<name>/$NAME/g" ~/.config/claude-resident/$NAME/CLAUDE.md
+```
+
+> ⚠️ OpenClaw SOUL.md/USER.md 포맷이 다를 수 있으므로 이전 후 내용 확인 권장
 
 ### Phase 3: Channels 설정
 - [ ] `/plugin marketplace add anthropics/claude-plugins-official`
@@ -352,8 +379,8 @@ mkdir -p ~/.config/claude-resident/$NAME/memory
 - [ ] `claude-resident-restart@.timer` → `~/.config/systemd/user/`
 - [ ] `claude-resident-restart@.service` → `~/.config/systemd/user/`
 - [ ] `systemctl --user daemon-reload`
-- [ ] `systemctl --user enable --now claude-resident@andy.service`
-- [ ] `systemctl --user enable claude-resident-restart@andy.timer`
+- [ ] `systemctl --user enable --now claude-resident@$NAME.service`
+- [ ] `systemctl --user enable claude-resident-restart@$NAME.timer`
 - [ ] 세션 복원 테스트: kill → 재시작 → 텔레그램 온라인 알림 확인
 
 ### Phase 5: OMX 연계 검증
@@ -401,5 +428,5 @@ tail -f ~/.local/state/claude-resident/andy/agent.log
 - [Claude Code Channels 공식 문서](https://code.claude.com/docs/en/channels)
 - [Channels Reference](https://code.claude.com/docs/en/channels-reference)
 - [공식 플러그인 소스 (Telegram)](https://github.com/anthropics/claude-plugins-official/tree/main/external_plugins/telegram)
-- omx-bridge: `/home/chjee/workspace/omx-bridge`
+- omx-bridge: `~/workspace/omx-bridge`
 - OpenClaw 메모리: `~/.openclaw/workspace/`
