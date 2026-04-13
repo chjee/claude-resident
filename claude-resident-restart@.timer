@@ -1,0 +1,11 @@
+[Unit]
+Description=Claude Resident 일일 재시작 (%i)
+
+[Timer]
+# 매일 새벽 6시 재시작
+OnCalendar=*-*-* 06:00:00
+# WSL2 꺼져 있다가 켜져도 놓친 타이머 실행
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,17 @@
+[Unit]
+Description=Claude Resident Agent (%i)
+After=network.target omx-bridge.service
+
+[Service]
+Type=forking
+WorkingDirectory=/home/chjee
+ExecStart=/home/chjee/.local/bin/claude-resident %i start
+ExecStop=/home/chjee/.local/bin/claude-resident %i shutdown
+TimeoutStopSec=30
+Restart=on-failure
+RestartSec=10
+EnvironmentFile=/home/chjee/workspace/omx-bridge/.env
+Environment=PATH=/home/chjee/.local/bin:/home/chjee/.nvm/versions/node/v24.14.1/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,66 @@
+---
+name: 작업 방식 (workflow)
+description: Andy/Codex/창훈님 역할 분담, omx-bridge 호출 방법, 주요 경로
+type: project
+---
+
+# 작업 방식
+
+## 역할 분담
+
+| 역할 | 담당 | 하는 일 |
+|------|------|---------|
+| **Andy** (Claude) | 기획·설계·리뷰 | 아이디어 구체화, 코드 리뷰, PR 머지 결정, 메모리 관리 |
+| **Codex** (OMX) | 코딩·실행 | 코드 작성, PR 생성, 테스트, 파일 편집 |
+| **창훈님** | 방향·의사결정 | 목표 설정, 최종 승인, 우선순위 결정 |
+
+## omx-bridge
+
+- **주소:** `http://localhost:3992`
+- **서비스:** `/home/chjee/workspace/omx-bridge`
+- **systemd:** `omx-bridge.service`
+
+### 작업 요청 형식
+
+```bash
+curl -s -X POST http://localhost:3992/jobs \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "<작업내용>", "cwd": "<절대경로>"}'
+```
+
+### 작업 상태 확인
+
+```bash
+# 전체 목록
+curl -s http://localhost:3992/jobs
+
+# 특정 작업
+curl -s http://localhost:3992/jobs/<jobId>
+```
+
+완료 알림은 TelegramNotifyService가 자동 전송.
+
+## Git 설정
+
+커밋 작성자는 **실제 계정 기준**으로 유지한다. 임의 변경 금지.
+
+```bash
+# 현재 설정 확인
+git config user.name
+git config user.email
+```
+
+> ⚠️ Andy / Codex 명의 커밋 작성자 변경은 히스토리 오염 및 push 실패 원인이 됨.
+> Co-Authored-By 트레일러로 기여 표시는 가능하나, user.name / user.email 변경은 하지 않는다.
+
+## 주요 경로
+
+| 항목 | 경로 |
+|------|------|
+| 워크스페이스 | `/home/chjee/workspace/` |
+| omx-bridge | `/home/chjee/workspace/omx-bridge` |
+| agent-dotfiles | `/home/chjee/workspace/agent-dotfiles` |
+| 아이디어 | `/home/chjee/ideas/` |
+| Claude 인스턴스 홈 | `~/.config/claude-resident/<name>/` |
+| Claude 메모리 | `~/.config/claude-resident/<name>/memory/` |
+| OpenClaw 메모리 | `~/.openclaw/workspace/memory/` |

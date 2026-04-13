@@ -1,0 +1,136 @@
+#!/bin/bash
+# =====================================================
+# claude-resident — Claude Code + Telegram 에이전트 관리
+# =====================================================
+# 사용법:
+#   claude-resident <name> [start|stop|restart|status|shutdown]
+#
+# 예:
+#   claude-resident andy start
+#   claude-resident andy stop
+#   claude-resident andy restart
+#   claude-resident andy status
+#
+# 별칭: cr
+# =====================================================
+
+INSTANCE="${1:?사용법: claude-resident <name> [start|stop|restart|status|shutdown]}"
+CMD="${2:-start}"
+
+# 인스턴스 홈 디렉토리 (설정·메모리·로그 모두 여기)
+INSTANCE_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/claude-resident/$INSTANCE"
+LOG_FILE="$INSTANCE_DIR/agent.log"
+MEMORY_DIR="$INSTANCE_DIR/memory"
+
+# tmux 세션 이름
+SESSION="claude-resident-$INSTANCE"
+
+# Claude Code 바이너리
+CLAUDE_BIN="$HOME/.local/bin/claude"
+
+# Channels 플러그인
+CHANNEL="plugin:telegram@claude-plugins-official"
+
+# 디렉토리 초기화
+mkdir -p "$INSTANCE_DIR" "$MEMORY_DIR"
+
+# .env에서 텔레그램 설정 로드
+# TODO: xargs 방식은 값에 공백/특수문자가 있으면 깨질 수 있음.
+#       토큰/chat_id는 현재 안전하지만, 운영 강화 시 아래처럼 교체 권장:
+#   while IFS='=' read -r key val; do
+#     [[ "$key" =~ ^(TELEGRAM_BOT_TOKEN|TELEGRAM_NOTIFY_CHAT_ID)$ ]] && export "$key=$val"
+#   done < "$ENV_FILE"
+ENV_FILE="$HOME/workspace/omx-bridge/.env"
+if [ -f "$ENV_FILE" ]; then
+  export $(grep -E '^(TELEGRAM_BOT_TOKEN|TELEGRAM_NOTIFY_CHAT_ID)=' "$ENV_FILE" | xargs)
+fi
+
+send_startup_trigger() {
+  # Claude 세션이 안정화되길 기다린 후 __STARTUP__ 트리거 전송
+  sleep 5
+  if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_NOTIFY_CHAT_ID" ]; then
+    echo "[$INSTANCE] WARN: TELEGRAM_BOT_TOKEN 또는 TELEGRAM_NOTIFY_CHAT_ID 없음 — startup 트리거 생략" | tee -a "$LOG_FILE"
+    return
+  fi
+
+  HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+    "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+    -H "Content-Type: application/json" \
+    -d "{\"chat_id\": \"${TELEGRAM_NOTIFY_CHAT_ID}\", \"text\": \"__STARTUP__\"}")
+
+  if [ "$HTTP_STATUS" = "200" ]; then
+    echo "[$INSTANCE] startup 트리거 전송 성공 (HTTP $HTTP_STATUS)" | tee -a "$LOG_FILE"
+  else
+    echo "[$INSTANCE] ERROR: startup 트리거 전송 실패 (HTTP $HTTP_STATUS) — 수동으로 __STARTUP__ 전송 필요" | tee -a "$LOG_FILE"
+  fi
+}
+
+start() {
+  if tmux has-session -t "$SESSION" 2>/dev/null; then
+    echo "$INSTANCE 이미 실행 중."
+    echo "접속: tmux attach -t $SESSION"
+    return
+  fi
+
+  echo "$INSTANCE 시작 중..."
+  tmux new-session -d -s "$SESSION" \
+    -e "CLAUDE_CHANNEL=$CHANNEL" \
+    -e "CLAUDE_RESIDENT_INSTANCE=$INSTANCE" \
+    -e "CLAUDE_RESIDENT_DIR=$INSTANCE_DIR" \
+    "$CLAUDE_BIN --channels $CHANNEL 2>&1 | tee -a $LOG_FILE"
+
+  # 백그라운드에서 startup 트리거 전송
+  send_startup_trigger &
+
+  echo "$INSTANCE 시작됨."
+  echo "접속: tmux attach -t $SESSION"
+  echo "로그: tail -f $LOG_FILE"
+}
+
+stop() {
+  if tmux has-session -t "$SESSION" 2>/dev/null; then
+    tmux kill-session -t "$SESSION"
+    echo "$INSTANCE 종료됨."
+  else
+    echo "$INSTANCE 실행 중 아님."
+  fi
+}
+
+shutdown() {
+  # systemd ExecStop 전용 — recent.md 저장 후 종료
+  echo "[$INSTANCE] 종료 신호 수신 — recent.md 저장 요청 중..." | tee -a "$LOG_FILE"
+
+  if [ -n "$TELEGRAM_BOT_TOKEN" ] && [ -n "$TELEGRAM_NOTIFY_CHAT_ID" ]; then
+    curl -s -o /dev/null -X POST \
+      "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+      -H "Content-Type: application/json" \
+      -d "{\"chat_id\": \"${TELEGRAM_NOTIFY_CHAT_ID}\", \"text\": \"__SHUTDOWN__\"}"
+    echo "[$INSTANCE] __SHUTDOWN__ 전송 완료 — 20초 대기 (recent.md 저장 시간)" | tee -a "$LOG_FILE"
+    sleep 20
+  else
+    echo "[$INSTANCE] WARN: 텔레그램 설정 없음 — 즉시 종료" | tee -a "$LOG_FILE"
+  fi
+
+  stop
+}
+
+status() {
+  if tmux has-session -t "$SESSION" 2>/dev/null; then
+    echo "✅ $INSTANCE 실행 중 (tmux session: $SESSION)"
+    tmux list-sessions -F "  세션: #{session_name} | 생성: #{session_created_string}" \
+      -f "#{==:#{session_name},$SESSION}"
+    echo "  홈: $INSTANCE_DIR"
+    echo "  로그: $LOG_FILE"
+  else
+    echo "❌ $INSTANCE 실행 중 아님"
+  fi
+}
+
+case "$CMD" in
+  start)    start ;;
+  stop)     stop ;;
+  restart)  stop; sleep 2; start ;;
+  status)   status ;;
+  shutdown) shutdown ;;  # systemd ExecStop 전용
+  *)        echo "사용법: claude-resident <name> [start|stop|restart|status|shutdown]" ;;
+esac

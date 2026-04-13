@@ -1,0 +1,38 @@
+---
+name: 프로젝트 현황
+description: 진행 중/완료된 프로젝트 목록, 브랜치, 다음 할 일
+type: project
+---
+
+# Projects
+
+_새 프로젝트 시작 또는 완료 시 업데이트. recent.md에서 완료된 항목 이동._
+
+---
+
+## 진행 중
+
+### telegram-claude-omx
+- **상태:** 아이디어 구체화 중
+- **경로:** `/home/chjee/ideas/telegram-claude-omx/`
+- **목표:** OpenClaw → Claude Code Channels 전환
+- **다음:** Bun 설치 → CLAUDE.md 작성 → Telegram 플러그인 설정 → 테스트
+
+### 중개사 AI 어시스턴트
+- **상태:** 기획 완료, 개발 미착수
+- **경로:** `/home/chjee/ideas/중개사-AI-어시스턴트/`
+- **목표:** 고령 공인중개사 대상 텔레그램 봇 MVP
+- **기술:** Claude API + RAG + 법제처 API
+- **보류 이유:** 법제처 API 신청 진행 중 (IP: 210.179.39.216)
+
+---
+
+## 완료
+
+### omx-bridge
+- **레포:** github.com/chjee/omx-bridge
+- **완료:** omx-bridge --full-auto 옵션, TelegramNotifyService, HMAC 콜백 인증
+
+### nestjs-prisma-blog
+- **레포:** github.com/chjee/nestjs-prisma-blog
+- **완료:** bcrypt, JWT 버그 수정, DTO 수정, 보안 강화 (CORS + Helmet + Throttler)
