@@ -17,7 +17,7 @@ type: project
 ## omx-bridge
 
 - **주소:** `http://localhost:3992`
-- **서비스:** `/home/chjee/workspace/omx-bridge`
+- **서비스:** `~/workspace/omx-bridge`
 - **systemd:** `omx-bridge.service`
 
 ### 작업 요청 형식
@@ -57,10 +57,9 @@ git config user.email
 
 | 항목 | 경로 |
 |------|------|
-| 워크스페이스 | `/home/chjee/workspace/` |
-| omx-bridge | `/home/chjee/workspace/omx-bridge` |
-| agent-dotfiles | `/home/chjee/workspace/agent-dotfiles` |
-| 아이디어 | `/home/chjee/ideas/` |
-| Claude 인스턴스 홈 | `~/.config/claude-resident/<name>/` |
+| 워크스페이스 | `~/workspace/` |
+| omx-bridge | `~/workspace/omx-bridge` |
+| resident 설정 홈 | `~/.config/claude-resident/<name>/` |
 | Claude 메모리 | `~/.config/claude-resident/<name>/memory/` |
+| resident 상태 홈 | `~/.local/state/claude-resident/<name>/` |
 | OpenClaw 메모리 | `~/.openclaw/workspace/memory/` |

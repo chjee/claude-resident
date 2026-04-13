@@ -17,12 +17,15 @@ _이 파일은 매 Claude Code 세션 시작 시 자동으로 로드된다._
 
 **첫 메시지를 받거나 `__STARTUP__` 트리거 수신 시 반드시 실행:**
 
+이 resident 세션은 `~/.config/claude-resident/<name>/` 를 현재 작업 디렉토리로 실행한다.
+따라서 메모리 파일은 아래 상대 경로 기준으로 읽는다.
+
 필수 파일 (없으면 startup 중단 + 텔레그램 보고):
-1. `~/.config/claude-resident/<name>/memory/soul.md` 읽기
-2. `~/.config/claude-resident/<name>/memory/user.md` 읽기
+1. `memory/soul.md` 읽기
+2. `memory/user.md` 읽기
 
 선택 파일 (없으면 빈 상태로 계속 진행):
-3. `~/.config/claude-resident/<name>/memory/recent.md` — 없으면 "최근 맥락 없음"으로 시작
+3. `memory/recent.md` — 없으면 "최근 맥락 없음"으로 시작
 4. `workflow.md` / `projects.md` — 필요해 보일 때만 추가 로드
 
 5. 텔레그램으로 전송:
@@ -103,7 +106,7 @@ curl -s -X POST http://localhost:3992/jobs \
 
 ### 업데이트 방법
 
-`~/.config/claude-resident/<name>/memory/recent.md` 파일 상단에 새 항목 추가:
+`memory/recent.md` 파일 상단에 새 항목 추가:
 
 ```markdown
 ## YYYY-MM-DD
@@ -137,7 +140,8 @@ curl -s -X POST http://localhost:3992/jobs \
 |------|------|
 | omx-bridge | `http://localhost:3992` |
 | 워크스페이스 | `~/workspace/` |
-| 인스턴스 홈 | `~/.config/claude-resident/<name>/` |
+| 인스턴스 설정 홈 | `~/.config/claude-resident/<name>/` |
 | 메모리 | `~/.config/claude-resident/<name>/memory/` |
-| 로그 | `~/.config/claude-resident/<name>/agent.log` |
+| 인스턴스 상태 홈 | `~/.local/state/claude-resident/<name>/` |
+| 로그 | `~/.local/state/claude-resident/<name>/agent.log` |
 | OpenClaw 메모리 | `~/.openclaw/workspace/memory/` |
