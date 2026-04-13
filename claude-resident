@@ -17,32 +17,36 @@
 INSTANCE="${1:?사용법: claude-resident <name> [start|stop|restart|status|shutdown]}"
 CMD="${2:-start}"
 
-# 인스턴스 홈 디렉토리 (설정·메모리·로그 모두 여기)
-INSTANCE_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/claude-resident/$INSTANCE"
-LOG_FILE="$INSTANCE_DIR/agent.log"
-MEMORY_DIR="$INSTANCE_DIR/memory"
+# 인스턴스 설정/상태 디렉토리
+INSTANCE_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/claude-resident/$INSTANCE"
+INSTANCE_STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/claude-resident/$INSTANCE"
+LOG_FILE="$INSTANCE_STATE_DIR/agent.log"
+MEMORY_DIR="$INSTANCE_CONFIG_DIR/memory"
 
 # tmux 세션 이름
 SESSION="claude-resident-$INSTANCE"
 
-# Claude Code 바이너리
-CLAUDE_BIN="$HOME/.local/bin/claude"
+# Claude Code 바이너리와 작업 디렉토리
+CLAUDE_BIN="${CLAUDE_BIN:-$(command -v claude 2>/dev/null || true)}"
+[ -n "$CLAUDE_BIN" ] || CLAUDE_BIN="$HOME/.local/bin/claude"
+WORKSPACE_DIR="${CLAUDE_RESIDENT_WORKSPACE_DIR:-$HOME/workspace}"
 
 # Channels 플러그인
 CHANNEL="plugin:telegram@claude-plugins-official"
 
 # 디렉토리 초기화
-mkdir -p "$INSTANCE_DIR" "$MEMORY_DIR"
+mkdir -p "$INSTANCE_CONFIG_DIR" "$INSTANCE_STATE_DIR" "$MEMORY_DIR"
 
 # .env에서 텔레그램 설정 로드
-# TODO: xargs 방식은 값에 공백/특수문자가 있으면 깨질 수 있음.
-#       토큰/chat_id는 현재 안전하지만, 운영 강화 시 아래처럼 교체 권장:
-#   while IFS='=' read -r key val; do
-#     [[ "$key" =~ ^(TELEGRAM_BOT_TOKEN|TELEGRAM_NOTIFY_CHAT_ID)$ ]] && export "$key=$val"
-#   done < "$ENV_FILE"
-ENV_FILE="$HOME/workspace/omx-bridge/.env"
+ENV_FILE="${CLAUDE_RESIDENT_OMX_BRIDGE_ENV_FILE:-$WORKSPACE_DIR/omx-bridge/.env}"
 if [ -f "$ENV_FILE" ]; then
-  export $(grep -E '^(TELEGRAM_BOT_TOKEN|TELEGRAM_NOTIFY_CHAT_ID)=' "$ENV_FILE" | xargs)
+  while IFS='=' read -r key val; do
+    case "$key" in
+      TELEGRAM_BOT_TOKEN|TELEGRAM_NOTIFY_CHAT_ID)
+        export "$key=$val"
+        ;;
+    esac
+  done < "$ENV_FILE"
 fi
 
 send_startup_trigger() {
@@ -72,12 +76,34 @@ start() {
     return
   fi
 
+  if [ ! -x "$CLAUDE_BIN" ]; then
+    echo "ERROR: Claude Code 바이너리를 찾지 못함: $CLAUDE_BIN"
+    return 1
+  fi
+
+  if [ ! -f "$INSTANCE_CONFIG_DIR/CLAUDE.md" ]; then
+    echo "WARN: $INSTANCE_CONFIG_DIR/CLAUDE.md 없음 — resident startup 규칙이 로드되지 않을 수 있음"
+  fi
+
   echo "$INSTANCE 시작 중..."
+  claude_cmd=(env "CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1" "$CLAUDE_BIN")
+  if [ -d "$WORKSPACE_DIR" ]; then
+    claude_cmd+=(--add-dir "$WORKSPACE_DIR")
+  else
+    echo "WARN: workspace 디렉토리 없음 — --add-dir 생략: $WORKSPACE_DIR"
+  fi
+  claude_cmd+=(--channels "$CHANNEL")
+
+  printf -v claude_cmd_string '%q ' "${claude_cmd[@]}"
+  printf -v log_file_q '%q' "$LOG_FILE"
+
   tmux new-session -d -s "$SESSION" \
+    -c "$INSTANCE_CONFIG_DIR" \
     -e "CLAUDE_CHANNEL=$CHANNEL" \
     -e "CLAUDE_RESIDENT_INSTANCE=$INSTANCE" \
-    -e "CLAUDE_RESIDENT_DIR=$INSTANCE_DIR" \
-    "$CLAUDE_BIN --channels $CHANNEL 2>&1 | tee -a $LOG_FILE"
+    -e "CLAUDE_RESIDENT_CONFIG_DIR=$INSTANCE_CONFIG_DIR" \
+    -e "CLAUDE_RESIDENT_STATE_DIR=$INSTANCE_STATE_DIR" \
+    "${claude_cmd_string}2>&1 | tee -a ${log_file_q}"
 
   # 백그라운드에서 startup 트리거 전송
   send_startup_trigger &
@@ -119,7 +145,8 @@ status() {
     echo "✅ $INSTANCE 실행 중 (tmux session: $SESSION)"
     tmux list-sessions -F "  세션: #{session_name} | 생성: #{session_created_string}" \
       -f "#{==:#{session_name},$SESSION}"
-    echo "  홈: $INSTANCE_DIR"
+    echo "  설정: $INSTANCE_CONFIG_DIR"
+    echo "  상태: $INSTANCE_STATE_DIR"
     echo "  로그: $LOG_FILE"
   else
     echo "❌ $INSTANCE 실행 중 아님"
