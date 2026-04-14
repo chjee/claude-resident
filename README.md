@@ -360,13 +360,13 @@ curl POST /jobs 실패
 claude plugin install telegram@claude-plugins-official
 ```
 
-봇 토큰 설정:
+기본 Telegram 플러그인 상태 디렉토리 준비:
 
 ```bash
 mkdir -p ~/.claude/channels/telegram
-echo "TELEGRAM_BOT_TOKEN=<봇토큰>" > ~/.claude/channels/telegram/.env
-chmod 600 ~/.claude/channels/telegram/.env
 ```
+
+> resident 운영에서는 실제 봇 토큰/알림 chat_id를 보통 인스턴스 `.env`에 둔다. 전역 `~/.claude/channels/telegram/.env`는 resident 없이 Claude Telegram 플러그인만 단독 테스트할 때 주로 쓴다.
 
 allowlist 설정 (페어링 없이 바로 허용):
 
@@ -458,8 +458,6 @@ cat ~/.openclaw/openclaw.json | python3 -m json.tool | grep -E "botToken|allowFr
 cp claude-resident ~/.local/bin/claude-resident
 chmod +x ~/.local/bin/claude-resident
 
-# systemd PATH에 bun 경로 추가
-# claude-resident@.service의 Environment=PATH 줄에 %h/.bun/bin: 추가
 cp claude-resident@.service ~/.config/systemd/user/
 cp claude-resident-restart@.service ~/.config/systemd/user/
 cp claude-resident-restart@.timer ~/.config/systemd/user/
@@ -467,13 +465,7 @@ cp claude-resident-restart@.timer ~/.config/systemd/user/
 systemctl --user daemon-reload
 ```
 
-**systemd service PATH 수정** (`~/.config/systemd/user/claude-resident@.service`):
-
-```ini
-Environment=PATH=%h/.bun/bin:%h/.nvm/versions/node/v24.14.1/bin:%h/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-```
-
-> `claude-resident` 스크립트는 `~/.bun/bin`이 PATH에 없어도 자동으로 추가하므로 수동 실행(`claude-resident john start`)에서도 bun이 정상 동작한다. systemd 서비스는 별도로 위 PATH 설정이 필요하다.
+> 현재 레포의 `claude-resident@.service`와 `claude-resident` 스크립트는 `~/.bun/bin`을 포함하는 PATH를 전제로 이미 맞춰져 있다. 레포 파일을 그대로 설치했다면 별도 PATH 수정을 다시 할 필요는 없다.
 
 ---
 
@@ -658,6 +650,8 @@ systemctl --user restart claude-resident@andy
 journalctl --user -u claude-resident@andy -f
 tail -f ~/.local/state/claude-resident/andy/agent.log
 ```
+
+> `agent.log`는 TTY 제어문자를 제거한 plain-text 로그를 남기도록 되어 있다. resident가 실제로 어떤 메시지를 받았고 어떤 상태로 올라왔는지 확인하는 용도로 쓴다.
 
 ---
 
