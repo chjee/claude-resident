@@ -41,7 +41,7 @@ for _env in "$INSTANCE_ENV_FILE" "$ENV_FILE"; do
   if [ -f "$_env" ]; then
     while IFS='=' read -r key val; do
       case "$key" in
-        TELEGRAM_BOT_TOKEN|TELEGRAM_NOTIFY_CHAT_ID)
+        TELEGRAM_BOT_TOKEN|TELEGRAM_NOTIFY_CHAT_ID|WEBHOOK_PORT)
           # 인스턴스 .env가 우선 — 이미 설정된 값은 덮어쓰지 않음
           [ -z "${!key}" ] && export "$key=$val"
           ;;
@@ -91,7 +91,7 @@ start() {
   BUN_BIN_DIR="${BUN_INSTALL:-$HOME/.bun}/bin"
   case ":$PATH:" in *":$BUN_BIN_DIR:"*) ;; *) PATH="$BUN_BIN_DIR:$PATH" ;; esac
 
-  claude_cmd=(env "CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1" "PATH=$PATH" "$CLAUDE_BIN")
+  claude_cmd=(env "CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1" "PATH=$PATH" ${WEBHOOK_PORT:+"WEBHOOK_PORT=$WEBHOOK_PORT"} "$CLAUDE_BIN")
   if [ -d "$WORKSPACE_DIR" ]; then
     claude_cmd+=(--add-dir "$WORKSPACE_DIR")
   else
@@ -107,6 +107,7 @@ start() {
     -e "CLAUDE_RESIDENT_INSTANCE=$INSTANCE" \
     -e "CLAUDE_RESIDENT_CONFIG_DIR=$INSTANCE_CONFIG_DIR" \
     -e "CLAUDE_RESIDENT_STATE_DIR=$INSTANCE_STATE_DIR" \
+    ${WEBHOOK_PORT:+-e "WEBHOOK_PORT=$WEBHOOK_PORT"} \
     "${claude_cmd_string}"
 
   # pipe-pane으로 로깅 (PTY를 유지한 채 출력 캡처)
