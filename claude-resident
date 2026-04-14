@@ -91,7 +91,7 @@ start() {
   BUN_BIN_DIR="${BUN_INSTALL:-$HOME/.bun}/bin"
   case ":$PATH:" in *":$BUN_BIN_DIR:"*) ;; *) PATH="$BUN_BIN_DIR:$PATH" ;; esac
 
-  claude_cmd=(env "CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1" "PATH=$PATH" "$CLAUDE_BIN")
+  claude_cmd=(env "CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1" "PATH=$PATH" ${WEBHOOK_PORT:+"WEBHOOK_PORT=$WEBHOOK_PORT"} "$CLAUDE_BIN")
   if [ -d "$WORKSPACE_DIR" ]; then
     claude_cmd+=(--add-dir "$WORKSPACE_DIR")
   else
