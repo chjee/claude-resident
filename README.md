@@ -449,7 +449,7 @@ systemctl --user daemon-reload
 Environment=PATH=%h/.bun/bin:%h/.nvm/versions/node/v24.14.1/bin:%h/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 ```
 
-> bun이 설치된 경로를 PATH에 넣어야 telegram 플러그인이 기동된다.
+> `claude-resident` 스크립트는 `~/.bun/bin`이 PATH에 없어도 자동으로 추가하므로 수동 실행(`claude-resident john start`)에서도 bun이 정상 동작한다. systemd 서비스는 별도로 위 PATH 설정이 필요하다.
 
 ---
 
@@ -495,6 +495,57 @@ tmux attach -t claude-resident-$NAME
 
 ---
 
+### Phase 5-1: 그룹 채팅방 연동 (선택)
+
+봇을 그룹에 초대한 후 `access.json`의 `groups`에 해당 채팅방의 **실제 chat_id**를 추가해야 한다.
+
+> ⚠️ `"*"` 와일드카드는 동작하지 않는다. `server.ts`가 `access.groups[groupId]`로 직접 키 조회를 하기 때문에 정확한 chat_id가 필요하다.
+
+**그룹 chat_id 확인 방법:**
+
+```bash
+# 1. 인스턴스 세션 잠깐 중단
+tmux kill-session -t claude-resident-$NAME
+
+# 2. 그룹에서 봇 멘션 (@봇이름 텍스트)
+
+# 3. getUpdates로 chat_id 캡처 (봇이 멈춰있는 동안만 가능)
+curl -s "https://api.telegram.org/bot<TOKEN>/getUpdates?offset=-5&timeout=15" | \
+  python3 -c "
+import json, sys
+for upd in json.load(sys.stdin).get('result', []):
+    chat = upd.get('message', {}).get('chat', {})
+    if chat.get('type') in ('group', 'supergroup'):
+        print(f\"chat_id={chat['id']} title={chat['title']}\")
+"
+
+# 4. access.json에 추가
+```
+
+`~/.claude/channels/telegram/access.json`:
+
+```json
+{
+    "dmPolicy": "open",
+    "allowFrom": ["<내_chat_id>"],
+    "groups": {
+        "-1003731273645": {
+            "requireMention": true
+        }
+    },
+    "pending": {}
+}
+```
+
+```bash
+# 5. 세션 재시작
+claude-resident $NAME start
+```
+
+이후 그룹에서 봇을 멘션하면 메시지가 전달된다.
+
+---
+
 ### Phase 6: OMX 연계 (추후)
 
 omx-bridge `NOTIFY_MODE=claude` 전환 후 E2E 검증:
@@ -524,11 +575,12 @@ systemctl --user restart omx-bridge
 - [ ] 최초 기동 시 bypassPermissions "2. Yes, I accept" 선택
 - [ ] 텔레그램 온라인 알림 확인
 - [ ] 메시지 응답 확인
+- [ ] (선택) 그룹 채팅방 연동: 세션 중단 → getUpdates로 chat_id 캡처 → access.json groups에 추가 → 재시작
 - [ ] (추후) omx-bridge NOTIFY_MODE=claude 전환
 
 ---
 
-## 10. 파일 목록
+## 11. 파일 목록
 
 ```
 (레포 루트)
