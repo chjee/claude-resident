@@ -15,7 +15,7 @@
 # 별칭: cr
 # =====================================================
 
-INSTANCE="${1:?사용법: claude-resident <name> [start|stop|restart|status|shutdown]}"
+INSTANCE="${1:?사용법: claude-resident <name> [start|stop|restart|status|check|shutdown]}"
 CMD="${2:-start}"
 
 # 인스턴스 설정/상태 디렉토리
@@ -141,8 +141,8 @@ start() {
     ${WEBHOOK_PORT:+-e "WEBHOOK_PORT=$WEBHOOK_PORT"} \
     "${claude_cmd_string}"
 
-  # pipe-pane으로 로깅 (PTY를 유지한 채 출력 캡처)
-  tmux pipe-pane -t "$SESSION" "cat >> '$LOG_FILE'"
+  # pipe-pane으로 로깅 (PTY를 유지하면서 ANSI/OSC escape와 제어문자는 제거)
+  tmux pipe-pane -t "$SESSION" "perl -CSDA -pe 's/\\e\\[[0-?]*[ -\\/]*[@-~]//g; s/\\e\\][^\\a]*(?:\\a|\\e\\\\)//gs; s/\\x08//g' | col -b >> '$LOG_FILE'"
 
   # 백그라운드에서 startup 트리거 전송
   send_startup_trigger &
