@@ -3,13 +3,12 @@ Description=Claude Resident Agent (%i)
 After=network.target omx-bridge.service
 
 [Service]
-Type=forking
+Type=oneshot
+RemainAfterExit=yes
 WorkingDirectory=%h
 ExecStart=%h/.local/bin/claude-resident %i start
 ExecStop=%h/.local/bin/claude-resident %i shutdown
 TimeoutStopSec=30
-Restart=on-failure
-RestartSec=10
 Environment=CLAUDE_RESIDENT_WORKSPACE_DIR=%h/workspace
 Environment=CLAUDE_RESIDENT_OMX_BRIDGE_ENV_FILE=%h/workspace/omx-bridge/.env
 Environment=PATH=%h/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
