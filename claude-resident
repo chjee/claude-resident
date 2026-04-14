@@ -31,23 +31,24 @@ CLAUDE_BIN="${CLAUDE_BIN:-$(command -v claude 2>/dev/null || true)}"
 [ -n "$CLAUDE_BIN" ] || CLAUDE_BIN="$HOME/.local/bin/claude"
 WORKSPACE_DIR="${CLAUDE_RESIDENT_WORKSPACE_DIR:-$HOME/workspace}"
 
-# Channels 플러그인
-CHANNEL="plugin:telegram@claude-plugins-official"
-
 # 디렉토리 초기화
 mkdir -p "$INSTANCE_CONFIG_DIR" "$INSTANCE_STATE_DIR" "$MEMORY_DIR"
 
-# .env에서 텔레그램 설정 로드
+# .env에서 텔레그램 설정 로드 (인스턴스별 .env 우선, 없으면 omx-bridge .env fallback)
+INSTANCE_ENV_FILE="$INSTANCE_CONFIG_DIR/.env"
 ENV_FILE="${CLAUDE_RESIDENT_OMX_BRIDGE_ENV_FILE:-$WORKSPACE_DIR/omx-bridge/.env}"
-if [ -f "$ENV_FILE" ]; then
-  while IFS='=' read -r key val; do
-    case "$key" in
-      TELEGRAM_BOT_TOKEN|TELEGRAM_NOTIFY_CHAT_ID)
-        export "$key=$val"
-        ;;
-    esac
-  done < "$ENV_FILE"
-fi
+for _env in "$INSTANCE_ENV_FILE" "$ENV_FILE"; do
+  if [ -f "$_env" ]; then
+    while IFS='=' read -r key val; do
+      case "$key" in
+        TELEGRAM_BOT_TOKEN|TELEGRAM_NOTIFY_CHAT_ID)
+          # 인스턴스 .env가 우선 — 이미 설정된 값은 덮어쓰지 않음
+          [ -z "${!key}" ] && export "$key=$val"
+          ;;
+      esac
+    done < "$_env"
+  fi
+done
 
 send_startup_trigger() {
   # Claude 세션이 안정화되길 기다린 후 __STARTUP__ 트리거 전송
@@ -92,18 +93,20 @@ start() {
   else
     echo "WARN: workspace 디렉토리 없음 — --add-dir 생략: $WORKSPACE_DIR"
   fi
-  claude_cmd+=(--channels "$CHANNEL")
+  claude_cmd+=(--channels "plugin:telegram@claude-plugins-official")
+  claude_cmd+=(--permission-mode bypassPermissions)
 
   printf -v claude_cmd_string '%q ' "${claude_cmd[@]}"
-  printf -v log_file_q '%q' "$LOG_FILE"
 
   tmux new-session -d -s "$SESSION" \
     -c "$INSTANCE_CONFIG_DIR" \
-    -e "CLAUDE_CHANNEL=$CHANNEL" \
     -e "CLAUDE_RESIDENT_INSTANCE=$INSTANCE" \
     -e "CLAUDE_RESIDENT_CONFIG_DIR=$INSTANCE_CONFIG_DIR" \
     -e "CLAUDE_RESIDENT_STATE_DIR=$INSTANCE_STATE_DIR" \
-    "${claude_cmd_string}2>&1 | tee -a ${log_file_q}"
+    "${claude_cmd_string}"
+
+  # pipe-pane으로 로깅 (PTY를 유지한 채 출력 캡처)
+  tmux pipe-pane -t "$SESSION" "cat >> '$LOG_FILE'"
 
   # 백그라운드에서 startup 트리거 전송
   send_startup_trigger &
