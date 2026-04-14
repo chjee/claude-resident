@@ -3,13 +3,14 @@
 # claude-resident — Claude Code + Telegram 에이전트 관리
 # =====================================================
 # 사용법:
-#   claude-resident <name> [start|stop|restart|status|shutdown]
+#   claude-resident <name> [start|stop|restart|status|check|shutdown]
 #
 # 예:
 #   claude-resident andy start
 #   claude-resident andy stop
 #   claude-resident andy restart
 #   claude-resident andy status
+#   claude-resident andy check
 #
 # 별칭: cr
 # =====================================================
@@ -30,6 +31,12 @@ SESSION="claude-resident-$INSTANCE"
 CLAUDE_BIN="${CLAUDE_BIN:-$(command -v claude 2>/dev/null || true)}"
 [ -n "$CLAUDE_BIN" ] || CLAUDE_BIN="$HOME/.local/bin/claude"
 WORKSPACE_DIR="${CLAUDE_RESIDENT_WORKSPACE_DIR:-$HOME/workspace}"
+BUN_BIN_DIR="${BUN_INSTALL:-$HOME/.bun}/bin"
+PERMISSION_MODE="${CLAUDE_RESIDENT_PERMISSION_MODE:-bypassPermissions}"
+STARTUP_TRIGGER_DELAY_SEC="${CLAUDE_RESIDENT_STARTUP_DELAY_SEC:-5}"
+TRIGGER_RETRY_DELAY_SEC="${CLAUDE_RESIDENT_TRIGGER_RETRY_DELAY_SEC:-2}"
+STARTUP_TRIGGER_RETRIES="${CLAUDE_RESIDENT_STARTUP_RETRIES:-3}"
+SHUTDOWN_TRIGGER_RETRIES="${CLAUDE_RESIDENT_SHUTDOWN_RETRIES:-2}"
 
 # 디렉토리 초기화
 mkdir -p "$INSTANCE_CONFIG_DIR" "$INSTANCE_STATE_DIR" "$MEMORY_DIR"
@@ -50,23 +57,48 @@ for _env in "$INSTANCE_ENV_FILE" "$ENV_FILE"; do
   fi
 done
 
+log() {
+  printf '%s\n' "$*" | tee -a "$LOG_FILE"
+}
+
+send_telegram_text() {
+  local text="${1:?text is required}"
+  local retries="${2:-1}"
+  local attempt=1
+  local http_status=""
+
+  while [ "$attempt" -le "$retries" ]; do
+    http_status=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+      "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+      -H "Content-Type: application/json" \
+      -d "{\"chat_id\": \"${TELEGRAM_NOTIFY_CHAT_ID}\", \"text\": \"${text}\"}")
+
+    if [ "$http_status" = "200" ]; then
+      return 0
+    fi
+
+    if [ "$attempt" -lt "$retries" ]; then
+      sleep "$TRIGGER_RETRY_DELAY_SEC"
+    fi
+    attempt=$((attempt + 1))
+  done
+
+  printf '%s\n' "${http_status:-000}"
+  return 1
+}
+
 send_startup_trigger() {
   # Claude 세션이 안정화되길 기다린 후 __STARTUP__ 트리거 전송
-  sleep 5
+  sleep "$STARTUP_TRIGGER_DELAY_SEC"
   if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_NOTIFY_CHAT_ID" ]; then
-    echo "[$INSTANCE] WARN: TELEGRAM_BOT_TOKEN 또는 TELEGRAM_NOTIFY_CHAT_ID 없음 — startup 트리거 생략" | tee -a "$LOG_FILE"
+    log "[$INSTANCE] WARN: TELEGRAM_BOT_TOKEN 또는 TELEGRAM_NOTIFY_CHAT_ID 없음 — startup 트리거 생략"
     return
   fi
 
-  HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
-    "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-    -H "Content-Type: application/json" \
-    -d "{\"chat_id\": \"${TELEGRAM_NOTIFY_CHAT_ID}\", \"text\": \"__STARTUP__\"}")
-
-  if [ "$HTTP_STATUS" = "200" ]; then
-    echo "[$INSTANCE] startup 트리거 전송 성공 (HTTP $HTTP_STATUS)" | tee -a "$LOG_FILE"
+  if send_telegram_text "__STARTUP__" "$STARTUP_TRIGGER_RETRIES"; then
+    log "[$INSTANCE] startup 트리거 전송 성공"
   else
-    echo "[$INSTANCE] ERROR: startup 트리거 전송 실패 (HTTP $HTTP_STATUS) — 수동으로 __STARTUP__ 전송 필요" | tee -a "$LOG_FILE"
+    log "[$INSTANCE] ERROR: startup 트리거 전송 실패 — 수동으로 __STARTUP__ 전송 필요"
   fi
 }
 
@@ -88,7 +120,6 @@ start() {
 
   echo "$INSTANCE 시작 중..."
   # bun이 PATH에 없어도 플러그인이 동작하도록 보장
-  BUN_BIN_DIR="${BUN_INSTALL:-$HOME/.bun}/bin"
   case ":$PATH:" in *":$BUN_BIN_DIR:"*) ;; *) PATH="$BUN_BIN_DIR:$PATH" ;; esac
 
   claude_cmd=(env "CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1" "PATH=$PATH" ${WEBHOOK_PORT:+"WEBHOOK_PORT=$WEBHOOK_PORT"} "$CLAUDE_BIN")
@@ -98,7 +129,7 @@ start() {
     echo "WARN: workspace 디렉토리 없음 — --add-dir 생략: $WORKSPACE_DIR"
   fi
   claude_cmd+=(--channels "plugin:telegram@claude-plugins-official")
-  claude_cmd+=(--permission-mode bypassPermissions)
+  claude_cmd+=(--permission-mode "$PERMISSION_MODE")
 
   printf -v claude_cmd_string '%q ' "${claude_cmd[@]}"
 
@@ -132,20 +163,77 @@ stop() {
 
 shutdown() {
   # systemd ExecStop 전용 — recent.md 저장 후 종료
-  echo "[$INSTANCE] 종료 신호 수신 — recent.md 저장 요청 중..." | tee -a "$LOG_FILE"
+  log "[$INSTANCE] 종료 신호 수신 — recent.md 저장 요청 중..."
 
   if [ -n "$TELEGRAM_BOT_TOKEN" ] && [ -n "$TELEGRAM_NOTIFY_CHAT_ID" ]; then
-    curl -s -o /dev/null -X POST \
-      "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-      -H "Content-Type: application/json" \
-      -d "{\"chat_id\": \"${TELEGRAM_NOTIFY_CHAT_ID}\", \"text\": \"__SHUTDOWN__\"}"
-    echo "[$INSTANCE] __SHUTDOWN__ 전송 완료 — 20초 대기 (recent.md 저장 시간)" | tee -a "$LOG_FILE"
-    sleep 20
+    if send_telegram_text "__SHUTDOWN__" "$SHUTDOWN_TRIGGER_RETRIES"; then
+      log "[$INSTANCE] __SHUTDOWN__ 전송 완료 — 20초 대기 (recent.md 저장 시간)"
+      sleep 20
+    else
+      log "[$INSTANCE] WARN: __SHUTDOWN__ 전송 실패 — recent.md 저장 없이 종료될 수 있음"
+    fi
   else
-    echo "[$INSTANCE] WARN: 텔레그램 설정 없음 — 즉시 종료" | tee -a "$LOG_FILE"
+    log "[$INSTANCE] WARN: 텔레그램 설정 없음 — 즉시 종료"
   fi
 
   stop
+}
+
+check() {
+  local failures=0
+  local warnings=0
+
+  _ok() { printf 'OK   %s\n' "$1"; }
+  _warn() { printf 'WARN %s\n' "$1"; warnings=$((warnings + 1)); }
+  _fail() { printf 'FAIL %s\n' "$1"; failures=$((failures + 1)); }
+
+  if [ -x "$CLAUDE_BIN" ]; then
+    _ok "Claude binary: $CLAUDE_BIN"
+  else
+    _fail "Claude binary not executable: $CLAUDE_BIN"
+  fi
+
+  if command -v tmux >/dev/null 2>&1; then
+    _ok "tmux available"
+  else
+    _fail "tmux not found in PATH"
+  fi
+
+  if command -v bun >/dev/null 2>&1 || [ -x "$BUN_BIN_DIR/bun" ]; then
+    _ok "bun available"
+  else
+    _warn "bun not found; Telegram plugin runtime may fail"
+  fi
+
+  [ -d "$INSTANCE_CONFIG_DIR" ] && _ok "config dir: $INSTANCE_CONFIG_DIR" || _fail "missing config dir: $INSTANCE_CONFIG_DIR"
+  [ -d "$INSTANCE_STATE_DIR" ] && _ok "state dir: $INSTANCE_STATE_DIR" || _fail "missing state dir: $INSTANCE_STATE_DIR"
+  [ -f "$INSTANCE_CONFIG_DIR/CLAUDE.md" ] && _ok "CLAUDE.md present" || _warn "missing CLAUDE.md"
+  [ -f "$MEMORY_DIR/soul.md" ] && _ok "memory/soul.md present" || _warn "missing memory/soul.md"
+  [ -f "$MEMORY_DIR/user.md" ] && _ok "memory/user.md present" || _warn "missing memory/user.md"
+  [ -f "$MEMORY_DIR/recent.md" ] && _ok "memory/recent.md present" || _warn "missing memory/recent.md"
+
+  if [ -f "$INSTANCE_ENV_FILE" ]; then
+    _ok "instance env present: $INSTANCE_ENV_FILE"
+  elif [ -f "$ENV_FILE" ]; then
+    _warn "instance env missing; using fallback env: $ENV_FILE"
+  else
+    _fail "no env source found (checked $INSTANCE_ENV_FILE and $ENV_FILE)"
+  fi
+
+  [ -n "$TELEGRAM_BOT_TOKEN" ] && _ok "telegram bot token configured" || _fail "telegram bot token missing"
+  [ -n "$TELEGRAM_NOTIFY_CHAT_ID" ] && _ok "telegram notify chat id configured" || _warn "telegram notify chat id missing"
+  [ -n "$WEBHOOK_PORT" ] && _ok "webhook port configured: $WEBHOOK_PORT" || _warn "webhook port not configured; MCP defaults may apply"
+  [ -d "$WORKSPACE_DIR" ] && _ok "workspace dir: $WORKSPACE_DIR" || _warn "workspace dir missing: $WORKSPACE_DIR"
+  _ok "permission mode: $PERMISSION_MODE"
+
+  if tmux has-session -t "$SESSION" 2>/dev/null; then
+    _ok "tmux session running: $SESSION"
+  else
+    _warn "tmux session not running: $SESSION"
+  fi
+
+  printf 'Summary: %s failure(s), %s warning(s)\n' "$failures" "$warnings"
+  [ "$failures" -eq 0 ]
 }
 
 status() {
@@ -166,6 +254,7 @@ case "$CMD" in
   stop)     stop ;;
   restart)  stop; sleep 2; start ;;
   status)   status ;;
+  check)    check ;;
   shutdown) shutdown ;;  # systemd ExecStop 전용
-  *)        echo "사용법: claude-resident <name> [start|stop|restart|status|shutdown]" ;;
+  *)        echo "사용법: claude-resident <name> [start|stop|restart|status|check|shutdown]" ;;
 esac
