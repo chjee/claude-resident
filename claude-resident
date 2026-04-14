@@ -87,7 +87,11 @@ start() {
   fi
 
   echo "$INSTANCE 시작 중..."
-  claude_cmd=(env "CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1" "$CLAUDE_BIN")
+  # bun이 PATH에 없어도 플러그인이 동작하도록 보장
+  BUN_BIN_DIR="${BUN_INSTALL:-$HOME/.bun}/bin"
+  case ":$PATH:" in *":$BUN_BIN_DIR:"*) ;; *) PATH="$BUN_BIN_DIR:$PATH" ;; esac
+
+  claude_cmd=(env "CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1" "PATH=$PATH" "$CLAUDE_BIN")
   if [ -d "$WORKSPACE_DIR" ]; then
     claude_cmd+=(--add-dir "$WORKSPACE_DIR")
   else
