@@ -403,10 +403,16 @@ TELEGRAM_NOTIFY_CHAT_ID=<내_텔레그램_chat_id>
 WEBHOOK_PORT=3993
 # 선택: 기본값은 bypassPermissions
 # CLAUDE_RESIDENT_PERMISSION_MODE=acceptEdits
+# 선택: startup/shutdown 트리거 타이밍 조정
+# CLAUDE_RESIDENT_STARTUP_DELAY_SEC=5
+# CLAUDE_RESIDENT_TRIGGER_RETRY_DELAY_SEC=2
+# CLAUDE_RESIDENT_STARTUP_RETRIES=3
+# CLAUDE_RESIDENT_SHUTDOWN_RETRIES=2
 EOF
 ```
 
 > 이 파일이 있으면 `omx-bridge/.env`보다 우선 적용된다.
+> `WEBHOOK_PORT`는 resident별 omx-bridge MCP 알림 포트를 구분할 때 사용한다.
 
 **CLAUDE.md 작성** (`~/.config/claude-resident/$NAME/CLAUDE.md`):
 
@@ -479,7 +485,7 @@ systemctl --user status claude-resident@$NAME.service
 claude-resident $NAME check
 ```
 
-이 서비스는 `tmux` 세션을 생성/종료하는 런처라서, `systemctl --user status`에서 `active (exited)`로 보이는 것이 정상이다.
+이 서비스는 `Type=oneshot`, `RemainAfterExit=yes` 로 동작하는 `tmux` 런처라서, `systemctl --user status`에서 `active (exited)`로 보이는 것이 정상이다.
 실제 resident가 살아 있는지는 아래 둘로 확인한다.
 
 - `claude-resident $NAME check`
@@ -527,6 +533,7 @@ tmux attach -t claude-resident-$NAME
 - `CLAUDE.md`, `memory/soul.md`, `memory/user.md`, `memory/recent.md`
 - 인스턴스 `.env` 또는 fallback `.env`
 - `TELEGRAM_BOT_TOKEN`, `TELEGRAM_NOTIFY_CHAT_ID`, `WEBHOOK_PORT`
+- `CLAUDE_RESIDENT_PERMISSION_MODE` 반영 결과
 - tmux 세션 실행 여부
 
 ---
@@ -565,7 +572,7 @@ for upd in json.load(sys.stdin).get('result', []):
     "dmPolicy": "open",
     "allowFrom": ["<내_chat_id>"],
     "groups": {
-        "-1003731273645": {
+        "<group_chat_id>": {
             "requireMention": true
         }
     },
