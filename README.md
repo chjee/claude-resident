@@ -320,42 +320,98 @@ curl POST /jobs 실패
 
 ---
 
-## 9. 구현 체크리스트
+## 9. 실제 설치 기록 (john 인스턴스, 2026-04-14)
 
-### Phase 1: 준비
-- [ ] Bun 설치 (`curl -fsSL https://bun.sh/install | bash`)
-- [ ] claude.ai 구독 상태 확인 (Pro/Max)
-- [ ] 텔레그램 봇 토큰 확인 (`omx-bridge/.env` 재활용)
+존 노트북(WSL2, Ubuntu)에서 첫 인스턴스 설치 완료. 이 과정에서 발견한 이슈와 해결책을 반영한 가이드다.
 
-### Phase 2-A: 신규 설치
+### 사전 조건
+
+| 항목 | 확인 |
+|------|------|
+| `bun` 설치 | `curl -fsSL https://bun.sh/install | bash` (unzip 먼저 필요: `sudo apt-get install -y unzip`) |
+| `tmux` 설치 | `tmux -V` (없으면 `sudo apt-get install -y tmux`) |
+| Claude Code | `claude --version` (v2.1.80+) |
+| claude.ai 구독 | Pro/Max (API 키 불가) |
+| 텔레그램 봇 | 인스턴스별 전용 봇 권장 (봇 간 polling 충돌 방지) |
+
+> **봇 충돌 주의**: OpenClaw와 claude-resident가 같은 봇 토큰을 공유하면 409 Conflict 발생. 인스턴스별로 다른 봇을 사용하거나, 테스트 시 OpenClaw를 중지할 것.
+
+---
+
+### Phase 1: Telegram 플러그인 설치
 
 ```bash
-NAME=andy  # 인스턴스 이름
-
-mkdir -p ~/.config/claude-resident/$NAME/memory
-
-cp memory/soul.md.example     ~/.config/claude-resident/$NAME/memory/soul.md
-cp memory/user.md.example     ~/.config/claude-resident/$NAME/memory/user.md
-cp memory/workflow.md.example ~/.config/claude-resident/$NAME/memory/workflow.md
-cp memory/projects.md.example ~/.config/claude-resident/$NAME/memory/projects.md
-cp memory/recent.md.example   ~/.config/claude-resident/$NAME/memory/recent.md
-cp CLAUDE.md                  ~/.config/claude-resident/$NAME/CLAUDE.md
-
-# <name> 플레이스홀더 교체
-sed -i "s/<name>/$NAME/g" ~/.config/claude-resident/$NAME/CLAUDE.md
+# Claude Code 세션에서 실행
+claude plugin install telegram@claude-plugins-official
 ```
 
-- [ ] `soul.md` / `user.md` 내용 작성 (캐릭터·사용자 정보)
-
-### Phase 2-B: OpenClaw에서 마이그레이션
+봇 토큰 설정:
 
 ```bash
-NAME=andy  # 인스턴스 이름
-OPENCLAW_DIR=~/.openclaw/workspace
+mkdir -p ~/.claude/channels/telegram
+echo "TELEGRAM_BOT_TOKEN=<봇토큰>" > ~/.claude/channels/telegram/.env
+chmod 600 ~/.claude/channels/telegram/.env
+```
+
+allowlist 설정 (페어링 없이 바로 허용):
+
+```bash
+cat > ~/.claude/channels/telegram/access.json << 'EOF'
+{
+    "dmPolicy": "open",
+    "allowFrom": ["<내_텔레그램_chat_id>"],
+    "groups": {},
+    "pending": {}
+}
+EOF
+```
+
+> **chat_id 확인법**: 봇에게 DM을 보낸 후 `https://api.telegram.org/bot<TOKEN>/getUpdates` 로 확인하거나, 봇 채팅에서 전송 후 pending 항목의 `senderId` 확인.
+
+---
+
+### Phase 2: 인스턴스 디렉토리 구성
+
+```bash
+NAME=john  # 인스턴스 이름
 
 mkdir -p ~/.config/claude-resident/$NAME/memory
+mkdir -p ~/.local/state/claude-resident/$NAME
+```
 
-# 기존 OpenClaw 메모리 이전
+**인스턴스별 봇 토큰 설정** (`~/.config/claude-resident/$NAME/.env`):
+
+```bash
+cat > ~/.config/claude-resident/$NAME/.env << 'EOF'
+TELEGRAM_BOT_TOKEN=<인스턴스_전용_봇_토큰>
+TELEGRAM_NOTIFY_CHAT_ID=<내_텔레그램_chat_id>
+EOF
+```
+
+> 이 파일이 있으면 `omx-bridge/.env`보다 우선 적용된다.
+
+**CLAUDE.md 작성** (`~/.config/claude-resident/$NAME/CLAUDE.md`):
+
+레포의 `CLAUDE.md`를 복사 후 인스턴스에 맞게 수정:
+- 이름/호칭 변경 (`앤디` → `존` 등)
+- 온/오프라인 메시지 문구 조정
+- 주요 경로의 `<name>` 플레이스홀더 교체
+
+**메모리 파일 작성**:
+
+```
+~/.config/claude-resident/$NAME/memory/
+    soul.md    — 캐릭터/페르소나 (이름, 역할, 말투)
+    user.md    — 사용자 정보 (chat_id, 이름, 작업 스타일)
+    recent.md  — 최근 맥락 요약 (없으면 "이전 맥락 없음"으로 시작)
+```
+
+**OpenClaw에서 마이그레이션하는 경우**:
+
+```bash
+OPENCLAW_DIR=~/.openclaw/workspace
+
+# soul.md / user.md 이전
 cp $OPENCLAW_DIR/SOUL.md ~/.config/claude-resident/$NAME/memory/soul.md
 cp $OPENCLAW_DIR/USER.md ~/.config/claude-resident/$NAME/memory/user.md
 
@@ -363,37 +419,112 @@ cp $OPENCLAW_DIR/USER.md ~/.config/claude-resident/$NAME/memory/user.md
 LATEST=$(ls -t $OPENCLAW_DIR/memory/*.md 2>/dev/null | head -1)
 [ -n "$LATEST" ] && cp "$LATEST" ~/.config/claude-resident/$NAME/memory/recent.md
 
-cp memory/workflow.md.example ~/.config/claude-resident/$NAME/memory/workflow.md
-cp memory/projects.md.example ~/.config/claude-resident/$NAME/memory/projects.md
-cp CLAUDE.md                  ~/.config/claude-resident/$NAME/CLAUDE.md
-
-sed -i "s/<name>/$NAME/g" ~/.config/claude-resident/$NAME/CLAUDE.md
+# OpenClaw openclaw.json에서 봇 토큰, chat_id 확인
+cat ~/.openclaw/openclaw.json | python3 -m json.tool | grep -E "botToken|allowFrom"
 ```
 
-> ⚠️ OpenClaw SOUL.md/USER.md 포맷이 다를 수 있으므로 이전 후 내용 확인 권장
+> ⚠️ OpenClaw의 SOUL.md/USER.md 포맷이 다를 수 있으므로 이전 후 내용 확인 권장
 
-### Phase 3: Channels 설정
-- [ ] `/plugin marketplace add anthropics/claude-plugins-official`
-- [ ] `/plugin install telegram@claude-plugins-official`
-- [ ] `/reload-plugins`
-- [ ] `/telegram:configure <BOT_TOKEN>`
-- [ ] 페어링 완료 (`/telegram:access pair <code>`)
-- [ ] allowlist 설정 (`/telegram:access policy allowlist`)
+---
 
-### Phase 4: 세션 영속화
-- [ ] `claude-resident` → `~/.local/bin/claude-resident` (chmod +x)
-- [ ] 심볼릭 링크: `ln -s ~/.local/bin/claude-resident ~/.local/bin/cr`
-- [ ] `claude-resident@.service` → `~/.config/systemd/user/`
-- [ ] `claude-resident-restart@.timer` → `~/.config/systemd/user/`
-- [ ] `claude-resident-restart@.service` → `~/.config/systemd/user/`
-- [ ] `systemctl --user daemon-reload`
-- [ ] `systemctl --user enable --now claude-resident@$NAME.service`
-- [ ] `systemctl --user enable claude-resident-restart@$NAME.timer`
-- [ ] 세션 복원 테스트: kill → 재시작 → 텔레그램 온라인 알림 확인
+### Phase 3: 바이너리 및 systemd 설치
 
-### Phase 5: OMX 연계 검증
-- [ ] 텔레그램 코딩 요청 → omx-bridge 호출 → 결과 수신 확인
-- [ ] `[앤디]` / `✅ omx job` 접두어 구분 확인
+```bash
+# 바이너리 설치
+cp claude-resident ~/.local/bin/claude-resident
+chmod +x ~/.local/bin/claude-resident
+
+# systemd PATH에 bun 경로 추가
+# claude-resident@.service의 Environment=PATH 줄에 %h/.bun/bin: 추가
+cp claude-resident@.service ~/.config/systemd/user/
+cp claude-resident-restart@.service ~/.config/systemd/user/
+cp claude-resident-restart@.timer ~/.config/systemd/user/
+
+systemctl --user daemon-reload
+```
+
+**systemd service PATH 수정** (`~/.config/systemd/user/claude-resident@.service`):
+
+```ini
+Environment=PATH=%h/.bun/bin:%h/.nvm/versions/node/v24.14.1/bin:%h/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+```
+
+> bun이 설치된 경로를 PATH에 넣어야 telegram 플러그인이 기동된다.
+
+---
+
+### Phase 4: 서비스 시작
+
+```bash
+systemctl --user start claude-resident@$NAME.service
+systemctl --user status claude-resident@$NAME.service
+```
+
+**최초 기동 시 `bypassPermissions` 확인 처리**:
+
+tmux 세션에서 확인 창이 뜨면 선택해야 한다:
+
+```bash
+tmux attach -t claude-resident-$NAME
+# "2. Yes, I accept" 선택 후 Ctrl+B D로 detach
+```
+
+또는:
+
+```bash
+tmux send-keys -t claude-resident-$NAME "2" Enter
+```
+
+이후 재시작 시에는 자동으로 처리된다.
+
+---
+
+### Phase 5: 검증
+
+텔레그램에서 확인:
+- `🟢 존 온라인` 메시지 수신 여부
+- 메시지 보내면 Claude 응답 여부 (타이핑 → 응답)
+
+```bash
+# 로그 확인
+tail -f ~/.local/state/claude-resident/$NAME/agent.log
+
+# tmux 세션 직접 확인
+tmux attach -t claude-resident-$NAME
+```
+
+---
+
+### Phase 6: OMX 연계 (추후)
+
+omx-bridge `NOTIFY_MODE=claude` 전환 후 E2E 검증:
+
+```bash
+# omx-bridge .env 수정
+NOTIFY_MODE=claude
+CLAUDE_NOTIFY_URL=http://127.0.0.1:3993/notify
+
+systemctl --user restart omx-bridge
+```
+
+---
+
+## 10. 구현 체크리스트 (앤디 이식용)
+
+- [ ] `sudo apt-get install -y unzip` → `curl -fsSL https://bun.sh/install | bash`
+- [ ] `claude plugin install telegram@claude-plugins-official`
+- [ ] `~/.claude/channels/telegram/.env` — 봇 토큰 설정
+- [ ] `~/.claude/channels/telegram/access.json` — allowFrom에 chat_id 추가
+- [ ] `~/.config/claude-resident/andy/.env` — 인스턴스 봇 토큰/chat_id
+- [ ] `~/.config/claude-resident/andy/CLAUDE.md` — 작성
+- [ ] `~/.config/claude-resident/andy/memory/` — soul.md, user.md, recent.md
+- [ ] `claude-resident@.service` PATH에 `%h/.bun/bin:` 추가
+- [ ] systemd 파일 설치 + `daemon-reload`
+- [ ] `systemctl --user start claude-resident@andy.service`
+- [ ] 최초 기동 시 bypassPermissions "2. Yes, I accept" 선택
+- [ ] 텔레그램 온라인 알림 확인
+- [ ] 메시지 응답 확인
+- [ ] (추후) omx-bridge NOTIFY_MODE=claude 전환
 
 ---
 
