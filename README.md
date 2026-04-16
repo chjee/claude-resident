@@ -273,7 +273,7 @@ Claude Code는 자동 압축만 있고 직접 제어 불가.
 | 운영 | 이벤트마다 `recent.md` 갱신 | 재시작 후 복원 품질 보장 |
 | 예외 | Claude 자가 경고 → 수동 재시작 | 예상치 못한 급증 대응 |
 
-**중요:** `andy-restart.timer`는 compaction 예방용이고,  
+**중요:** `claude-resident-restart@.timer`는 compaction 예방용이고,  
 `recent.md`는 복원 품질 보장용이다. 자동 종료 저장(`__SHUTDOWN__`)은  
 best-effort이므로 두 가지 모두 운영해야 효과가 있다.
 
@@ -283,6 +283,20 @@ cp claude-resident-restart@.timer ~/.config/systemd/user/
 cp claude-resident-restart@.service ~/.config/systemd/user/
 systemctl --user daemon-reload
 systemctl --user enable claude-resident-restart@andy.timer
+systemctl --user enable --now claude-resident-health@andy.timer
+```
+
+### 프로세스 소멸 복구 (헬스체크 타이머)
+
+`Type=oneshot` 구조 특성상 systemd는 tmux 내부 프로세스 종료를 감지하지 못한다.
+`claude-resident-health@.timer`가 5분마다 tmux 세션 생존 여부를 확인하고, 소멸 시 자동 복구한다.
+
+- **복구 범위**: 프로세스/세션 소멸. Claude hang이나 plugin 응답 불능은 감지하지 못함
+- **의도적 정지 보호**: `systemctl --user is-active` gate로 `systemctl stop` 후에는 복구하지 않음
+- **주의**: 운영 중 정지는 반드시 `systemctl --user stop claude-resident@<name>.service` 사용. `claude-resident <name> stop` 직접 실행 시 systemd 상태가 active로 남아 health timer가 되살림
+
+```bash
+systemctl --user enable --now claude-resident-health@andy.timer
 ```
 
 ### __STARTUP__ 트리거 방식
@@ -461,6 +475,8 @@ chmod +x ~/.local/bin/claude-resident
 cp claude-resident@.service ~/.config/systemd/user/
 cp claude-resident-restart@.service ~/.config/systemd/user/
 cp claude-resident-restart@.timer ~/.config/systemd/user/
+cp claude-resident-health@.service ~/.config/systemd/user/
+cp claude-resident-health@.timer ~/.config/systemd/user/
 
 systemctl --user daemon-reload
 ```
@@ -623,6 +639,8 @@ systemctl --user restart omx-bridge
     claude-resident@.service           → ~/.config/systemd/user/
     claude-resident-restart@.timer     → ~/.config/systemd/user/
     claude-resident-restart@.service   → ~/.config/systemd/user/
+    claude-resident-health@.service    → ~/.config/systemd/user/
+    claude-resident-health@.timer      → ~/.config/systemd/user/
     CLAUDE.md                          → ~/.config/claude-resident/<name>/CLAUDE.md
     memory/
         soul.md.example    → ~/.config/claude-resident/<name>/memory/soul.md
