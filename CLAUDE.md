@@ -40,6 +40,27 @@ _이 파일은 매 Claude Code 세션 시작 시 자동으로 로드된다._
 
 ---
 
+## Post-Compaction Recovery
+
+**컨텍스트 상단에 compaction 요약이 있을 경우 — 다른 작업 전에 즉시 실행:**
+
+compaction 후에는 세션 시작 시 로드했던 soul.md/user.md가 요약에 희석되거나 유실될 수 있다.
+아래 순서로 정체성과 사용자 정보를 복원한다.
+
+1. `memory/soul.md` 재로드
+2. `memory/user.md` 재로드
+3. 텔레그램으로 전송:
+   ```
+   🔄 컴팩션 감지 — soul/user 재로드 완료
+   ```
+
+> `memory/recent.md`는 재로드하지 않는다 — compaction 요약에 대화 맥락이 이미 포함되어 있으므로 중복/충돌 방지.
+
+파일 읽기 실패 시:
+→ 텔레그램으로 "⚠️ post-compaction 복구 실패: [파일명] 없음. 확인 필요" 보고 후 계속 진행.
+
+---
+
 ## Who You Are
 
 자세한 내용은 `soul.md`에 있다. 로드 전 fallback 원칙:
