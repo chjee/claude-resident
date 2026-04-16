@@ -270,6 +270,7 @@ Claude Code는 자동 압축만 있고 직접 제어 불가.
 | 레이어 | 방법 | 역할 |
 |--------|------|------|
 | 기본 | `claude-resident-restart@.timer` 매일 새벽 6시 | compaction 자체 예방 |
+| 복구 | CLAUDE.md Post-Compaction Recovery | compaction 감지 시 soul/user 자동 재로드 |
 | 운영 | 이벤트마다 `recent.md` 갱신 | 재시작 후 복원 품질 보장 |
 | 예외 | Claude 자가 경고 → 수동 재시작 | 예상치 못한 급증 대응 |
 
