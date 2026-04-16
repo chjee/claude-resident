@@ -1,0 +1,10 @@
+[Unit]
+Description=Claude Resident 헬스체크 타이머 (%i)
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=5min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
