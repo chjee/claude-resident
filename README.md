@@ -278,6 +278,11 @@ Claude Code는 자동 압축만 있고 직접 제어 불가.
 `recent.md`는 복원 품질 보장용이다. 자동 종료 저장(`__SHUTDOWN__`)은  
 best-effort이므로 두 가지 모두 운영해야 효과가 있다.
 
+`claude-resident-restart@.service`는 직접 `claude-resident <name> start`를 호출하지 않고
+`systemctl --user restart claude-resident@<name>.service`로 main service를 재시작한다.
+그래야 tmux 세션과 하위 Claude/plugin 프로세스가 `claude-resident@<name>.service`
+cgroup 아래에서 일관되게 관리된다.
+
 배포:
 ```bash
 cp claude-resident-restart@.timer ~/.config/systemd/user/
@@ -295,6 +300,7 @@ systemctl --user enable --now claude-resident-health@andy.timer
 - **복구 범위**: 프로세스/세션 소멸. Claude hang이나 plugin 응답 불능은 감지하지 못함
 - **의도적 정지 보호**: `systemctl --user is-active` gate로 `systemctl stop` 후에는 복구하지 않음
 - **주의**: 운영 중 정지는 반드시 `systemctl --user stop claude-resident@<name>.service` 사용. `claude-resident <name> stop` 직접 실행 시 systemd 상태가 active로 남아 health timer가 되살림
+- **주의**: tmux 세션이 살아 있어도 Telegram poller를 다른 Claude 세션이 가져간 경우는 감지하지 못함. `claude-resident <name> check`의 global token warning과 `TELEGRAM_STATE_DIR` 분리 상태를 확인한다.
 
 ```bash
 systemctl --user enable --now claude-resident-health@andy.timer
@@ -416,6 +422,8 @@ cat > ~/.config/claude-resident/$NAME/.env << 'EOF'
 TELEGRAM_BOT_TOKEN=<인스턴스_전용_봇_토큰>
 TELEGRAM_NOTIFY_CHAT_ID=<내_텔레그램_chat_id>
 WEBHOOK_PORT=3993
+# 선택: 기본값은 ~/.config/claude-resident/$NAME/telegram
+# TELEGRAM_STATE_DIR=~/.config/claude-resident/$NAME/telegram
 # 선택: 기본값은 bypassPermissions
 # CLAUDE_RESIDENT_PERMISSION_MODE=acceptEdits
 # 선택: startup/shutdown 트리거 타이밍 조정
@@ -428,6 +436,10 @@ EOF
 
 > 이 파일이 있으면 `omx-bridge/.env`보다 우선 적용된다.
 > `WEBHOOK_PORT`는 resident별 omx-bridge MCP 알림 포트를 구분할 때 사용한다.
+> `TELEGRAM_STATE_DIR`는 Telegram plugin의 `access.json`, `bot.pid`, inbox를 인스턴스별로 분리한다.
+
+> ⚠️ Telegram을 resident 전용으로 쓸 경우, 같은 bot token을 `~/.claude/channels/telegram/.env`에 두지 않는다.
+> 전역 Claude 세션이 같은 token으로 Telegram plugin을 띄우면 Telegram long polling 소유권을 가져가 resident가 응답하지 않을 수 있다.
 
 **CLAUDE.md 작성** (`~/.config/claude-resident/$NAME/CLAUDE.md`):
 
