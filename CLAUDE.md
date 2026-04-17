@@ -9,9 +9,10 @@ _이 파일은 매 Claude Code 세션 시작 시 자동으로 로드된다._
 **`__SHUTDOWN__` 트리거 수신 시 (시스템 종료 신호) — 다른 모든 작업 중단하고 즉시 처리:**
 
 1. 진행 중인 작업 즉시 중단
-2. `recent.md` 상단에 현재 세션 요약 저장 (20초 안에 완료)
-3. 텔레그램으로 "🔴 앤디 오프라인 · recent.md 저장 완료" 전송
-4. 추가 메시지 처리 없이 대기 (프로세스는 systemd가 종료)
+2. `memory/daily/YYYY-MM-DD.md`에 현재 세션 요약 append (20초 안에 완료)
+3. append 성공 후 `memory/last-active.md` 갱신
+4. 텔레그램으로 "🔴 앤디 오프라인 · daily 저장 완료" 전송
+5. 추가 메시지 처리 없이 대기 (프로세스는 systemd가 종료)
 
 ---
 
@@ -25,14 +26,21 @@ _이 파일은 매 Claude Code 세션 시작 시 자동으로 로드된다._
 2. `memory/user.md` 읽기
 
 선택 파일 (없으면 빈 상태로 계속 진행):
-3. `memory/recent.md` — 없으면 "최근 맥락 없음"으로 시작
-4. `workflow.md` / `projects.md` — 필요해 보일 때만 추가 로드
+3. `memory/daily/YYYY-MM-DD.md` — 오늘 파일. 없으면 "오늘 daily 없음"으로 계속
+4. `memory/daily/YYYY-MM-DD.md` — 어제 파일. 없으면 "어제 daily 없음"으로 계속
+5. `memory/last-active.md` — 오늘/어제 daily가 비었거나 장기 중단 후 복구가 필요할 때만 참고
+6. `memory/MEMORY.md` — 기본 로드 금지. long-term 맥락이 필요할 때만 로드
+7. `memory/workflow.md` / `memory/projects.md` — 필요해 보일 때만 추가 로드
 
-5. 텔레그램으로 전송:
+과도기 fallback:
+- `memory/daily/` 구조가 없고 `memory/recent.md`만 있으면 `memory/recent.md`를 읽고 migration 필요성을 기억한다.
+- daily 구조가 있으면 새 기록은 daily에만 남기고 `recent.md`에는 쓰지 않는다.
+
+8. 텔레그램으로 전송:
    ```
    🟢 앤디 온라인
    [날짜/시간 Asia/Seoul]
-   [recent.md 기준 한 줄 현황 | 없으면 "이전 맥락 없음"]
+   [daily Current Summary 또는 last-active 기준 한 줄 현황 | 없으면 "이전 맥락 없음"]
    ```
 
 필수 파일 읽기 실패 시 묵묵부답 금지:
@@ -54,7 +62,8 @@ compaction 후에는 세션 시작 시 로드했던 soul.md/user.md가 요약에
    🔄 컴팩션 감지 — soul/user 재로드 완료
    ```
 
-> `memory/recent.md`는 재로드하지 않는다 — compaction 요약에 대화 맥락이 이미 포함되어 있으므로 중복/충돌 방지.
+> compaction 후에는 대화 로그 파일을 자동 재로드하지 않는다 — compaction 요약에 직전 맥락이 이미 포함되어 있으므로 중복/충돌 방지.
+> 사용자가 "이전 맥락 다시 봐"라고 요청하면 오늘/어제 daily의 Current Summary만 로드한다.
 
 파일 읽기 실패 시:
 → 텔레그램으로 "⚠️ post-compaction 복구 실패: [파일명] 없음. 확인 필요" 보고 후 계속 진행.
@@ -103,7 +112,7 @@ curl -s -X POST http://localhost:3992/jobs \
 
 ---
 
-## recent.md 업데이트 규칙
+## daily 메모리 업데이트 규칙
 
 ### 업데이트 트리거 (다음 중 하나라도 해당되면 즉시 저장)
 
@@ -117,31 +126,74 @@ curl -s -X POST http://localhost:3992/jobs \
 
 ### 컨텍스트 과부하 징후 (재시작 권고)
 
-아래 패턴이 보이면 recent.md 저장 후 재시작 권고:
+아래 패턴이 보이면 daily 저장 후 재시작 권고:
 - 예전 결정을 다시 확인하려는 요청이 반복됨
 - 여러 번 같은 맥락을 요약해서 참조하기 시작함
 - 긴 설계 대화가 주제 전환 없이 20분 이상 지속됨
 
 재시작 권고 시 텔레그램으로:
-"⚠️ 컨텍스트 길어졌어요. recent.md 저장했습니다. `systemctl --user restart claude-resident@<name>.service` 권장해요."
+"⚠️ 컨텍스트 길어졌어요. daily 저장했습니다. `systemctl --user restart claude-resident@<name>.service` 권장해요."
 
 ### 업데이트 방법
 
-`memory/recent.md` 파일 상단에 새 항목 추가:
+Asia/Seoul 기준 날짜로 `memory/daily/YYYY-MM-DD.md` 파일에 append한다. 오늘 파일이 없으면 생성한다.
 
 ```markdown
-## YYYY-MM-DD
-- [완료된 것] ...
-- [결정된 것] ...
-- [다음 할 것] ...
+# YYYY-MM-DD
+
+## Current Summary
+- 오늘 반드시 이어갈 핵심 3~7줄
+
+## Timeline
+### HH:MM KST — 세션 요약
+- [done] ...
+- [decision] ...
+- [next] ...
+- [memory-candidate] ...
+- [project-candidate] ...
+- [workflow-candidate] ...
+
+## Long-term Candidates
+- [memory] ...
+- [project] ...
+- [workflow] ...
 ```
 
-### 크기 관리 규칙
+저장 순서:
 
-- 항목당 최대 5줄
-- 전체 파일 최대 **50줄** 유지
-- 50줄 초과 시: 오래된 항목을 `projects.md` 또는 `workflow.md`로 이동 후 삭제
-- 완전히 지난 작업(완료 + 한 달 이상)은 삭제
+1. `memory/daily/YYYY-MM-DD.md` 생성 또는 append
+2. append 성공 확인
+3. `memory/last-active.md` 갱신
+4. Telegram 완료 메시지 전송
+
+`memory/last-active.md` 형식:
+
+```markdown
+- last_daily: memory/daily/YYYY-MM-DD.md
+- active_project: ...
+- resume_hint: ...
+```
+
+### 큐레이션 규칙
+
+- `[memory-candidate]` → `memory/MEMORY.md` 승격 검토
+- `[project-candidate]` → `memory/projects.md` 승격 검토
+- `[workflow-candidate]` → `memory/workflow.md` 승격 검토
+- startup 때는 daily 전체를 검토하지 말고 candidate 태그가 있는 항목만 확인
+- 사용자가 "기억해", "앞으로는", "이건 중요"라고 말하면 `memory/MEMORY.md`에 직접 반영
+
+### 보존 정책
+
+- `memory/daily/YYYY-MM-DD.md`는 최근 60일만 보존한다.
+- 60일 초과 파일 정리는 새벽 `claude-resident-restart@.service` maintenance 단계에서 수행한다.
+- `[memory-candidate]`, `[project-candidate]`, `[workflow-candidate]` 태그가 남은 파일은 삭제하지 않고 warning만 남긴다.
+- startup/shutdown 경로에서는 오래된 daily 삭제를 하지 않는다.
+
+### 과도기 규칙
+
+- 새 기록은 daily 파일에만 쓴다.
+- `memory/recent.md`는 읽기 fallback 또는 deprecated 안내 용도로만 유지한다.
+- daily와 recent에 같은 세션 요약을 동시에 쓰지 않는다.
 
 ---
 
