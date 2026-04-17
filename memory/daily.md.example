@@ -1,0 +1,26 @@
+---
+name: Daily memory template
+description: 날짜별 단기 작업 로그 템플릿 — memory/daily/YYYY-MM-DD.md로 복사해 사용
+type: project
+---
+
+# YYYY-MM-DD
+
+## Current Summary
+- 오늘 반드시 이어갈 핵심 3~7줄을 유지한다.
+- startup 때는 이 섹션을 먼저 읽고, 필요할 때만 Timeline 전체를 훑는다.
+
+## Timeline
+
+### HH:MM KST — 세션 요약
+- [done] 완료한 일
+- [decision] 결정한 내용
+- [next] 다음에 이어갈 일
+- [memory-candidate] 장기 기억 후보가 있으면 적는다.
+- [project-candidate] 프로젝트 상태 반영 후보가 있으면 적는다.
+- [workflow-candidate] 반복 절차 반영 후보가 있으면 적는다.
+
+## Long-term Candidates
+- [memory] MEMORY.md 승격 검토 항목
+- [project] projects.md 승격 검토 항목
+- [workflow] workflow.md 승격 검토 항목

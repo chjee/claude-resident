@@ -140,8 +140,8 @@ claude-resident andy start
          ↓
          CLAUDE.md의 Session Startup Sequence 실행
          ↓
-         soul.md → user.md → recent.md 읽기
-         (필요 시 workflow.md / projects.md 추가)
+         soul.md → user.md → daily/today + daily/yesterday 읽기
+         (필요 시 last-active.md / MEMORY.md / workflow.md / projects.md 추가)
          ↓
          텔레그램: "🟢 앤디 온라인 · [날짜/시간] · [한 줄 상태]"
 ```
@@ -151,8 +151,8 @@ claude-resident andy start
 ```markdown
 # Session Startup Sequence
 첫 메시지 수신 또는 __STARTUP__ 트리거 시:
-1. soul.md → user.md → recent.md 순서로 읽기
-2. 필요 시 workflow.md / projects.md 추가 로드
+1. soul.md → user.md → memory/daily/오늘.md → memory/daily/어제.md 순서로 읽기
+2. 필요 시 last-active.md / MEMORY.md / workflow.md / projects.md 추가 로드
 3. 텔레그램: "🟢 앤디 온라인 · [날짜/시간] · [한 줄 요약]"
 → 파일 읽기 전까지 어떤 질문에도 답하지 않는다.
 
@@ -167,8 +167,8 @@ claude-resident andy start
 omx-bridge 장애 시: "⚠️ omx-bridge 응답 없음" 전송 후 보류.
 
 # 메모리 저장 규칙
-대화 종료 / OMX 작업 완료 / 중요한 결정 시 recent.md 업데이트.
-recent.md는 50줄 이내로 유지.
+대화 종료 / OMX 작업 완료 / 중요한 결정 시 memory/daily/YYYY-MM-DD.md에 append.
+last-active.md는 daily append 성공 후 갱신한다.
 ```
 
 운영 원칙:
@@ -187,9 +187,12 @@ recent.md는 50줄 이내로 유지.
     └── memory/
         ├── soul.md       ← 캐릭터/페르소나 (변경 거의 없음)
         ├── user.md       ← 사용자 정보 (가끔 업데이트)
+        ├── MEMORY.md     ← 장기 기억 큐레이션 (필요 시 로드)
         ├── workflow.md   ← 역할 분담 + omx-bridge 호출법 (변경 거의 없음)
         ├── projects.md   ← 진행 중/완료 프로젝트 현황 (프로젝트 변경 시)
-        └── recent.md     ← 최근 맥락 롤링 요약 50줄 이내 (세션마다 업데이트)
+        ├── last-active.md ← 장기 중단/주말 복구용 포인터
+        └── daily/
+            └── YYYY-MM-DD.md ← 날짜별 단기 작업 로그
 
 ~/.local/state/claude-resident/<name>/
     └── agent.log         ← 실행 로그
@@ -200,7 +203,7 @@ recent.md는 50줄 이내로 유지.
 > rsync -av ~/.config/claude-resident/andy/ new-machine:~/.config/claude-resident/andy/
 > ```
 
-**recent.md 업데이트 트리거:**
+**daily 업데이트 트리거:**
 
 | 트리거 | 예시 |
 |--------|------|
@@ -208,10 +211,10 @@ recent.md는 50줄 이내로 유지.
 | OMX 작업 완료 | 작업 결과 알림 수신 후 |
 | 중요한 결정 | 아키텍처 결정, 방향 전환, 새 프로젝트 시작 |
 
-**recent.md 크기 관리:**
-- 항목당 최대 5줄, 전체 50줄 이내
-- 초과 시 오래된 항목을 `projects.md`로 이동 후 삭제
-- 완료 + 한 달 이상 지난 항목은 삭제
+**daily 보존 정책:**
+- `memory/daily/YYYY-MM-DD.md`는 최근 60일만 보존
+- 60일 초과 파일은 새벽 restart maintenance 단계에서 정리
+- `[memory-candidate]`, `[project-candidate]`, `[workflow-candidate]` 태그가 남은 파일은 삭제하지 않고 warning만 남김
 
 ---
 
@@ -219,7 +222,7 @@ recent.md는 50줄 이내로 유지.
 
 ### claude-resident 스크립트
 
-`<name> [start|stop|restart|status|check|shutdown]` 형식으로 인스턴스별 관리. 전체 코드: `claude-resident`
+`<name> [start|stop|restart|status|check|shutdown|cleanup-memory]` 형식으로 인스턴스별 관리. 전체 코드: `claude-resident`
 
 ```
 claude-resident andy start 동작:
@@ -271,11 +274,11 @@ Claude Code는 자동 압축만 있고 직접 제어 불가.
 |--------|------|------|
 | 기본 | `claude-resident-restart@.timer` 매일 새벽 6시 | compaction 자체 예방 |
 | 복구 | CLAUDE.md Post-Compaction Recovery | compaction 감지 시 soul/user 자동 재로드 |
-| 운영 | 이벤트마다 `recent.md` 갱신 | 재시작 후 복원 품질 보장 |
+| 운영 | 이벤트마다 daily 갱신 | 재시작 후 복원 품질 보장 |
 | 예외 | Claude 자가 경고 → 수동 재시작 | 예상치 못한 급증 대응 |
 
-**중요:** `claude-resident-restart@.timer`는 compaction 예방용이고,  
-`recent.md`는 복원 품질 보장용이다. 자동 종료 저장(`__SHUTDOWN__`)은  
+**중요:** `claude-resident-restart@.timer`는 compaction 예방용이고,
+daily 메모리는 복원 품질 보장용이다. 자동 종료 저장(`__SHUTDOWN__`)은
 best-effort이므로 두 가지 모두 운영해야 효과가 있다.
 
 `claude-resident-restart@.service`는 직접 `claude-resident <name> start`를 호출하지 않고
@@ -291,6 +294,9 @@ systemctl --user daemon-reload
 systemctl --user enable claude-resident-restart@andy.timer
 systemctl --user enable --now claude-resident-health@andy.timer
 ```
+
+새벽 재시작 전에는 `claude-resident <name> cleanup-memory`가 실행되어 60일 초과 daily 파일을 정리한다.
+candidate 태그가 남은 파일은 삭제하지 않고 warning 로그만 남긴다.
 
 ### 프로세스 소멸 복구 (헬스체크 타이머)
 
@@ -452,9 +458,13 @@ EOF
 
 ```
 ~/.config/claude-resident/$NAME/memory/
-    soul.md    — 캐릭터/페르소나 (이름, 역할, 말투)
-    user.md    — 사용자 정보 (chat_id, 이름, 작업 스타일)
-    recent.md  — 최근 맥락 요약 (없으면 "이전 맥락 없음"으로 시작)
+    soul.md         — 캐릭터/페르소나 (이름, 역할, 말투)
+    user.md         — 사용자 정보 (chat_id, 이름, 작업 스타일)
+    MEMORY.md       — 장기 기억 큐레이션 (필요 시)
+    workflow.md     — 반복 운영 절차 (필요 시)
+    projects.md     — 프로젝트 상태 (필요 시)
+    last-active.md  — 장기 중단/주말 복구용 포인터 (없어도 시작 가능)
+    daily/          — 날짜별 단기 작업 로그 (없어도 시작 가능)
 ```
 
 **OpenClaw에서 마이그레이션하는 경우**:
@@ -466,9 +476,10 @@ OPENCLAW_DIR=~/.openclaw/workspace
 cp $OPENCLAW_DIR/SOUL.md ~/.config/claude-resident/$NAME/memory/soul.md
 cp $OPENCLAW_DIR/USER.md ~/.config/claude-resident/$NAME/memory/user.md
 
-# 최근 맥락 이전 (가장 최신 파일)
+# 최근 맥락 이전 (가장 최신 파일을 오늘 daily로 복사)
 LATEST=$(ls -t $OPENCLAW_DIR/memory/*.md 2>/dev/null | head -1)
-[ -n "$LATEST" ] && cp "$LATEST" ~/.config/claude-resident/$NAME/memory/recent.md
+mkdir -p ~/.config/claude-resident/$NAME/memory/daily
+[ -n "$LATEST" ] && cp "$LATEST" ~/.config/claude-resident/$NAME/memory/daily/$(date +%F).md
 
 # OpenClaw openclaw.json에서 봇 토큰, chat_id 확인
 cat ~/.openclaw/openclaw.json | python3 -m json.tool | grep -E "botToken|allowFrom"
@@ -551,10 +562,11 @@ tmux attach -t claude-resident-$NAME
 `check` 명령은 다음을 본다:
 
 - `claude`, `tmux`, `bun` 존재 여부
-- `CLAUDE.md`, `memory/soul.md`, `memory/user.md`, `memory/recent.md`
+- `CLAUDE.md`, `memory/soul.md`, `memory/user.md`
+- `memory/daily/` 또는 과도기 fallback `memory/recent.md`
 - 인스턴스 `.env` 또는 fallback `.env`
 - `TELEGRAM_BOT_TOKEN`, `TELEGRAM_NOTIFY_CHAT_ID`, `WEBHOOK_PORT`
-- `CLAUDE_RESIDENT_PERMISSION_MODE` 반영 결과
+- `TELEGRAM_STATE_DIR`, `CLAUDE_RESIDENT_PERMISSION_MODE` 반영 결과
 - tmux 세션 실행 여부
 
 ---
@@ -569,7 +581,7 @@ tmux attach -t claude-resident-$NAME
 
 ```bash
 # 1. 인스턴스 세션 잠깐 중단
-tmux kill-session -t claude-resident-$NAME
+systemctl --user stop claude-resident@$NAME.service
 
 # 2. 그룹에서 봇 멘션 (@봇이름 텍스트)
 
@@ -586,7 +598,7 @@ for upd in json.load(sys.stdin).get('result', []):
 # 4. access.json에 추가
 ```
 
-`~/.claude/channels/telegram/access.json`:
+`$TELEGRAM_STATE_DIR/access.json` (기본값: `~/.config/claude-resident/$NAME/telegram/access.json`):
 
 ```json
 {
@@ -603,7 +615,7 @@ for upd in json.load(sys.stdin).get('result', []):
 
 ```bash
 # 5. 세션 재시작
-claude-resident $NAME start
+systemctl --user start claude-resident@$NAME.service
 ```
 
 이후 그룹에서 봇을 멘션하면 메시지가 전달된다.
@@ -628,11 +640,10 @@ systemctl --user restart omx-bridge
 
 - [ ] `sudo apt-get install -y unzip` → `curl -fsSL https://bun.sh/install | bash`
 - [ ] `claude plugin install telegram@claude-plugins-official`
-- [ ] `~/.claude/channels/telegram/.env` — 봇 토큰 설정
-- [ ] `~/.claude/channels/telegram/access.json` — allowFrom에 chat_id 추가
 - [ ] `~/.config/claude-resident/andy/.env` — 인스턴스 봇 토큰/chat_id
 - [ ] `~/.config/claude-resident/andy/CLAUDE.md` — 작성
-- [ ] `~/.config/claude-resident/andy/memory/` — soul.md, user.md, recent.md
+- [ ] `~/.config/claude-resident/andy/memory/` — soul.md, user.md, daily/
+- [ ] `~/.config/claude-resident/andy/telegram/` — access.json, bot.pid 등 인스턴스 전용 Telegram state
 - [ ] `claude-resident@.service` PATH에 `%h/.bun/bin:` 추가
 - [ ] systemd 파일 설치 + `daemon-reload`
 - [ ] `systemctl --user start claude-resident@andy.service`
@@ -660,7 +671,7 @@ systemctl --user restart omx-bridge
         user.md.example    → ~/.config/claude-resident/<name>/memory/user.md
         workflow.md.example → ~/.config/claude-resident/<name>/memory/workflow.md
         projects.md.example → ~/.config/claude-resident/<name>/memory/projects.md
-        recent.md.example  → ~/.config/claude-resident/<name>/memory/recent.md
+        daily.md.example   → ~/.config/claude-resident/<name>/memory/daily/YYYY-MM-DD.md
 
     (runtime)
     ~/.local/state/claude-resident/<name>/agent.log

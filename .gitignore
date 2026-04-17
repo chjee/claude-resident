@@ -1,4 +1,5 @@
 memory/*.md
+memory/daily/*.md
 agent.log
 .codex
 .omx/

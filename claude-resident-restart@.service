@@ -6,4 +6,5 @@ Description=Claude Resident 일일 재시작 실행 (%i)
 Type=oneshot
 # main service의 ExecStop/ExecStart를 통해 tmux 세션이 claude-resident@%i.service
 # cgroup 아래에서 일관되게 관리되도록 재시작한다.
+ExecStartPre=%h/.local/bin/claude-resident %i cleanup-memory
 ExecStart=/usr/bin/systemctl --user restart claude-resident@%i.service

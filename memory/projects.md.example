@@ -6,7 +6,7 @@ type: project
 
 # Projects
 
-_새 프로젝트 시작 또는 완료 시 업데이트. recent.md에서 완료된 항목 이동._
+_새 프로젝트 시작, 상태 변경, 완료 시 업데이트. daily의 [project-candidate] 항목에서 승격._
 
 ---
 

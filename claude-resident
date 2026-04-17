@@ -3,7 +3,7 @@
 # claude-resident — Claude Code + Telegram 에이전트 관리
 # =====================================================
 # 사용법:
-#   claude-resident <name> [start|stop|restart|status|check|shutdown]
+#   claude-resident <name> [start|stop|restart|status|check|shutdown|cleanup-memory]
 #
 # 예:
 #   claude-resident andy start
@@ -11,6 +11,7 @@
 #   claude-resident andy restart
 #   claude-resident andy status
 #   claude-resident andy check
+#   claude-resident andy cleanup-memory
 #
 # 별칭: cr
 # =====================================================
@@ -23,6 +24,7 @@ INSTANCE_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/claude-resident/$INSTANCE
 INSTANCE_STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/claude-resident/$INSTANCE"
 LOG_FILE="$INSTANCE_STATE_DIR/agent.log"
 MEMORY_DIR="$INSTANCE_CONFIG_DIR/memory"
+DAILY_DIR="$MEMORY_DIR/daily"
 DEFAULT_TELEGRAM_STATE_DIR="$INSTANCE_CONFIG_DIR/telegram"
 
 # tmux 세션 이름
@@ -38,6 +40,7 @@ STARTUP_TRIGGER_DELAY_SEC="${CLAUDE_RESIDENT_STARTUP_DELAY_SEC:-5}"
 TRIGGER_RETRY_DELAY_SEC="${CLAUDE_RESIDENT_TRIGGER_RETRY_DELAY_SEC:-2}"
 STARTUP_TRIGGER_RETRIES="${CLAUDE_RESIDENT_STARTUP_RETRIES:-3}"
 SHUTDOWN_TRIGGER_RETRIES="${CLAUDE_RESIDENT_SHUTDOWN_RETRIES:-2}"
+DAILY_RETENTION_DAYS="${CLAUDE_RESIDENT_DAILY_RETENTION_DAYS:-60}"
 
 # 디렉토리 초기화
 mkdir -p "$INSTANCE_CONFIG_DIR" "$INSTANCE_STATE_DIR" "$MEMORY_DIR"
@@ -194,21 +197,50 @@ stop() {
 }
 
 shutdown() {
-  # systemd ExecStop 전용 — recent.md 저장 후 종료
-  log "[$INSTANCE] 종료 신호 수신 — recent.md 저장 요청 중..."
+  # systemd ExecStop 전용 — daily 저장 후 종료
+  log "[$INSTANCE] 종료 신호 수신 — daily 저장 요청 중..."
 
   if [ -n "$TELEGRAM_BOT_TOKEN" ] && [ -n "$TELEGRAM_NOTIFY_CHAT_ID" ]; then
     if send_telegram_text "__SHUTDOWN__" "$SHUTDOWN_TRIGGER_RETRIES"; then
-      log "[$INSTANCE] __SHUTDOWN__ 전송 완료 — 20초 대기 (recent.md 저장 시간)"
+      log "[$INSTANCE] __SHUTDOWN__ 전송 완료 — 20초 대기 (daily 저장 시간)"
       sleep 20
     else
-      log "[$INSTANCE] WARN: __SHUTDOWN__ 전송 실패 — recent.md 저장 없이 종료될 수 있음"
+      log "[$INSTANCE] WARN: __SHUTDOWN__ 전송 실패 — daily 저장 없이 종료될 수 있음"
     fi
   else
     log "[$INSTANCE] WARN: 텔레그램 설정 없음 — 즉시 종료"
   fi
 
   stop
+}
+
+cleanup_memory() {
+  mkdir -p "$DAILY_DIR"
+
+  local cleaned=0
+  local skipped=0
+  local cutoff
+  local candidates='(\[memory-candidate\]|\[project-candidate\]|\[workflow-candidate\])'
+  cutoff=$(date -d "$DAILY_RETENTION_DAYS days ago" +%F)
+
+  for daily_file in "$DAILY_DIR"/????-??-??.md; do
+    [ -e "$daily_file" ] || continue
+    local daily_name="${daily_file##*/}"
+    local daily_date="${daily_name%.md}"
+    [ "$daily_date" \< "$cutoff" ] || continue
+
+    if grep -Eq "$candidates" "$daily_file"; then
+      log "[$INSTANCE] WARN: candidate tag 남은 오래된 daily 유지: $daily_file"
+      skipped=$((skipped + 1))
+      continue
+    fi
+
+    rm -f "$daily_file"
+    log "[$INSTANCE] 오래된 daily 삭제: $daily_file"
+    cleaned=$((cleaned + 1))
+  done
+
+  log "[$INSTANCE] daily cleanup 완료: deleted=$cleaned skipped=$skipped retention_days=$DAILY_RETENTION_DAYS cutoff=$cutoff"
 }
 
 check() {
@@ -242,7 +274,15 @@ check() {
   [ -f "$INSTANCE_CONFIG_DIR/CLAUDE.md" ] && _ok "CLAUDE.md present" || _warn "missing CLAUDE.md"
   [ -f "$MEMORY_DIR/soul.md" ] && _ok "memory/soul.md present" || _warn "missing memory/soul.md"
   [ -f "$MEMORY_DIR/user.md" ] && _ok "memory/user.md present" || _warn "missing memory/user.md"
-  [ -f "$MEMORY_DIR/recent.md" ] && _ok "memory/recent.md present" || _warn "missing memory/recent.md"
+
+  if [ -d "$DAILY_DIR" ]; then
+    _ok "memory daily dir: $DAILY_DIR"
+  elif [ -f "$MEMORY_DIR/recent.md" ]; then
+    _warn "memory/daily missing; using legacy memory/recent.md fallback"
+  else
+    _warn "missing memory/daily and legacy memory/recent.md"
+  fi
+
   [ -d "$TELEGRAM_STATE_DIR" ] && _ok "telegram state dir: $TELEGRAM_STATE_DIR" || _warn "missing telegram state dir: $TELEGRAM_STATE_DIR"
   [ -f "$TELEGRAM_STATE_DIR/access.json" ] && _ok "telegram access file present" || _warn "missing telegram access file: $TELEGRAM_STATE_DIR/access.json"
 
@@ -312,5 +352,6 @@ case "$CMD" in
   status)   status ;;
   check)    check ;;
   shutdown) shutdown ;;  # systemd ExecStop 전용
-  *)        echo "사용법: claude-resident <name> [start|stop|restart|status|check|shutdown]" ;;
+  cleanup-memory) cleanup_memory ;;
+  *)        echo "사용법: claude-resident <name> [start|stop|restart|status|check|shutdown|cleanup-memory]" ;;
 esac
