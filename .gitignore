@@ -1,2 +1,4 @@
 memory/*.md
 agent.log
+.codex
+.omx/
