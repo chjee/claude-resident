@@ -23,6 +23,7 @@ INSTANCE_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/claude-resident/$INSTANCE
 INSTANCE_STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/claude-resident/$INSTANCE"
 LOG_FILE="$INSTANCE_STATE_DIR/agent.log"
 MEMORY_DIR="$INSTANCE_CONFIG_DIR/memory"
+DEFAULT_TELEGRAM_STATE_DIR="$INSTANCE_CONFIG_DIR/telegram"
 
 # tmux 세션 이름
 SESSION="claude-resident-$INSTANCE"
@@ -48,7 +49,7 @@ for _env in "$INSTANCE_ENV_FILE" "$ENV_FILE"; do
   if [ -f "$_env" ]; then
     while IFS='=' read -r key val; do
       case "$key" in
-        TELEGRAM_BOT_TOKEN|TELEGRAM_NOTIFY_CHAT_ID|WEBHOOK_PORT)
+        TELEGRAM_BOT_TOKEN|TELEGRAM_NOTIFY_CHAT_ID|WEBHOOK_PORT|TELEGRAM_STATE_DIR)
           # 인스턴스 .env가 우선 — 이미 설정된 값은 덮어쓰지 않음
           [ -z "${!key}" ] && export "$key=$val"
           ;;
@@ -56,9 +57,32 @@ for _env in "$INSTANCE_ENV_FILE" "$ENV_FILE"; do
     done < "$_env"
   fi
 done
+TELEGRAM_STATE_DIR="${TELEGRAM_STATE_DIR:-$DEFAULT_TELEGRAM_STATE_DIR}"
 
 log() {
   printf '%s\n' "$*" | tee -a "$LOG_FILE"
+}
+
+ensure_telegram_state() {
+  mkdir -p "$TELEGRAM_STATE_DIR"
+  chmod 700 "$TELEGRAM_STATE_DIR" 2>/dev/null || true
+
+  if [ -n "$TELEGRAM_BOT_TOKEN" ]; then
+    ( umask 077; printf 'TELEGRAM_BOT_TOKEN=%s\n' "$TELEGRAM_BOT_TOKEN" > "$TELEGRAM_STATE_DIR/.env" )
+  fi
+
+  if [ ! -f "$TELEGRAM_STATE_DIR/access.json" ] && [ -n "$TELEGRAM_NOTIFY_CHAT_ID" ]; then
+    ( umask 077
+      cat > "$TELEGRAM_STATE_DIR/access.json" <<EOF
+{
+  "dmPolicy": "allowlist",
+  "allowFrom": ["$TELEGRAM_NOTIFY_CHAT_ID"],
+  "groups": {},
+  "pending": {}
+}
+EOF
+    )
+  fi
 }
 
 send_telegram_text() {
@@ -119,10 +143,17 @@ start() {
   fi
 
   echo "$INSTANCE 시작 중..."
+  ensure_telegram_state
   # bun이 PATH에 없어도 플러그인이 동작하도록 보장
   case ":$PATH:" in *":$BUN_BIN_DIR:"*) ;; *) PATH="$BUN_BIN_DIR:$PATH" ;; esac
 
-  claude_cmd=(env "CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1" "DISABLE_AUTOUPDATER=1" "PATH=$PATH" ${WEBHOOK_PORT:+"WEBHOOK_PORT=$WEBHOOK_PORT"} "$CLAUDE_BIN")
+  claude_cmd=(env
+    "CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1"
+    "DISABLE_AUTOUPDATER=1"
+    "TELEGRAM_STATE_DIR=$TELEGRAM_STATE_DIR"
+    "PATH=$PATH"
+    ${WEBHOOK_PORT:+"WEBHOOK_PORT=$WEBHOOK_PORT"}
+    "$CLAUDE_BIN")
   if [ -d "$WORKSPACE_DIR" ]; then
     claude_cmd+=(--add-dir "$WORKSPACE_DIR")
   else
@@ -138,6 +169,7 @@ start() {
     -e "CLAUDE_RESIDENT_INSTANCE=$INSTANCE" \
     -e "CLAUDE_RESIDENT_CONFIG_DIR=$INSTANCE_CONFIG_DIR" \
     -e "CLAUDE_RESIDENT_STATE_DIR=$INSTANCE_STATE_DIR" \
+    -e "TELEGRAM_STATE_DIR=$TELEGRAM_STATE_DIR" \
     ${WEBHOOK_PORT:+-e "WEBHOOK_PORT=$WEBHOOK_PORT"} \
     "${claude_cmd_string}"
 
@@ -211,6 +243,8 @@ check() {
   [ -f "$MEMORY_DIR/soul.md" ] && _ok "memory/soul.md present" || _warn "missing memory/soul.md"
   [ -f "$MEMORY_DIR/user.md" ] && _ok "memory/user.md present" || _warn "missing memory/user.md"
   [ -f "$MEMORY_DIR/recent.md" ] && _ok "memory/recent.md present" || _warn "missing memory/recent.md"
+  [ -d "$TELEGRAM_STATE_DIR" ] && _ok "telegram state dir: $TELEGRAM_STATE_DIR" || _warn "missing telegram state dir: $TELEGRAM_STATE_DIR"
+  [ -f "$TELEGRAM_STATE_DIR/access.json" ] && _ok "telegram access file present" || _warn "missing telegram access file: $TELEGRAM_STATE_DIR/access.json"
 
   if [ -f "$INSTANCE_ENV_FILE" ]; then
     _ok "instance env present: $INSTANCE_ENV_FILE"
@@ -223,6 +257,28 @@ check() {
   [ -n "$TELEGRAM_BOT_TOKEN" ] && _ok "telegram bot token configured" || _fail "telegram bot token missing"
   [ -n "$TELEGRAM_NOTIFY_CHAT_ID" ] && _ok "telegram notify chat id configured" || _warn "telegram notify chat id missing"
   [ -n "$WEBHOOK_PORT" ] && _ok "webhook port configured: $WEBHOOK_PORT" || _warn "webhook port not configured; MCP defaults may apply"
+
+  local global_telegram_env="${HOME}/.claude/channels/telegram/.env"
+  if [ -n "$TELEGRAM_BOT_TOKEN" ] && [ -f "$global_telegram_env" ]; then
+    local global_token
+    global_token=$(awk -F= '$1 == "TELEGRAM_BOT_TOKEN" {print substr($0, index($0, "=") + 1)}' "$global_telegram_env")
+    if [ "$global_token" = "$TELEGRAM_BOT_TOKEN" ]; then
+      _warn "global Claude Telegram token matches this resident; non-resident Claude sessions may steal polling"
+    fi
+  fi
+
+  if [ -f "$TELEGRAM_STATE_DIR/bot.pid" ]; then
+    local bot_pid
+    bot_pid=$(cat "$TELEGRAM_STATE_DIR/bot.pid")
+    if [ -n "$bot_pid" ] && kill -0 "$bot_pid" 2>/dev/null; then
+      _ok "telegram poller pid alive: $bot_pid"
+    else
+      _warn "telegram poller pid stale: ${bot_pid:-empty}"
+    fi
+  else
+    _warn "telegram poller pid missing; expected while session is running"
+  fi
+
   [ -d "$WORKSPACE_DIR" ] && _ok "workspace dir: $WORKSPACE_DIR" || _warn "workspace dir missing: $WORKSPACE_DIR"
   _ok "permission mode: $PERMISSION_MODE"
 
