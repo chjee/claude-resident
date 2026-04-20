@@ -222,7 +222,7 @@ last-active.md는 daily append 성공 후 갱신한다.
 
 ### claude-resident 스크립트
 
-`<name> [start|stop|restart|status|check|shutdown|cleanup-memory]` 형식으로 인스턴스별 관리. 전체 코드: `claude-resident`
+`<name> [start|stop|restart|status|check|shutdown|cleanup-memory|logs|attach]` 형식으로 인스턴스별 관리. 전체 코드: `claude-resident`
 
 ```
 claude-resident andy start 동작:
@@ -241,12 +241,7 @@ claude-resident andy start 동작:
 
 ```bash
 # 설치
-cp claude-resident ~/.local/bin/claude-resident
-chmod +x ~/.local/bin/claude-resident
-ln -s ~/.local/bin/claude-resident ~/.local/bin/cr   # 별칭
-
-cp claude-resident@.service ~/.config/systemd/user/
-systemctl --user daemon-reload
+./install.sh
 systemctl --user enable --now claude-resident@andy.service
 ```
 
@@ -288,9 +283,7 @@ cgroup 아래에서 일관되게 관리된다.
 
 배포:
 ```bash
-cp claude-resident-restart@.timer ~/.config/systemd/user/
-cp claude-resident-restart@.service ~/.config/systemd/user/
-systemctl --user daemon-reload
+./install.sh
 systemctl --user enable claude-resident-restart@andy.timer
 systemctl --user enable --now claude-resident-health@andy.timer
 ```
@@ -437,12 +430,16 @@ WEBHOOK_PORT=3993
 # CLAUDE_RESIDENT_TRIGGER_RETRY_DELAY_SEC=2
 # CLAUDE_RESIDENT_STARTUP_RETRIES=3
 # CLAUDE_RESIDENT_SHUTDOWN_RETRIES=2
+# CLAUDE_RESIDENT_RESTART_DELAY_SEC=2
+# CLAUDE_RESIDENT_LOG_ROTATE_BYTES=10485760
 EOF
 ```
 
 > 이 파일이 있으면 `omx-bridge/.env`보다 우선 적용된다.
+> `.env` 값은 `export KEY=value`, 따옴표, CRLF, `KEY = value` 형식을 허용한다.
 > `WEBHOOK_PORT`는 resident별 omx-bridge MCP 알림 포트를 구분할 때 사용한다.
 > `TELEGRAM_STATE_DIR`는 Telegram plugin의 `access.json`, `bot.pid`, inbox를 인스턴스별로 분리한다.
+> Telegram API JSON payload와 `access.json` 생성을 위해 `jq` 또는 `python3` 중 하나가 필요하다.
 
 > ⚠️ Telegram을 resident 전용으로 쓸 경우, 같은 bot token을 `~/.claude/channels/telegram/.env`에 두지 않는다.
 > 전역 Claude 세션이 같은 token으로 Telegram plugin을 띄우면 Telegram long polling 소유권을 가져가 resident가 응답하지 않을 수 있다.
@@ -492,17 +489,7 @@ cat ~/.openclaw/openclaw.json | python3 -m json.tool | grep -E "botToken|allowFr
 ### Phase 3: 바이너리 및 systemd 설치
 
 ```bash
-# 바이너리 설치
-cp claude-resident ~/.local/bin/claude-resident
-chmod +x ~/.local/bin/claude-resident
-
-cp claude-resident@.service ~/.config/systemd/user/
-cp claude-resident-restart@.service ~/.config/systemd/user/
-cp claude-resident-restart@.timer ~/.config/systemd/user/
-cp claude-resident-health@.service ~/.config/systemd/user/
-cp claude-resident-health@.timer ~/.config/systemd/user/
-
-systemctl --user daemon-reload
+./install.sh
 ```
 
 > 현재 레포의 `claude-resident@.service`와 `claude-resident` 스크립트는 `~/.bun/bin`을 포함하는 PATH를 전제로 이미 맞춰져 있다. 레포 파일을 그대로 설치했다면 별도 PATH 수정을 다시 할 필요는 없다.
@@ -528,7 +515,7 @@ claude-resident $NAME check
 tmux 세션에서 확인 창이 뜨면 선택해야 한다:
 
 ```bash
-tmux attach -t claude-resident-$NAME
+claude-resident $NAME attach
 # "2. Yes, I accept" 선택 후 Ctrl+B D로 detach
 ```
 
@@ -553,10 +540,10 @@ tmux send-keys -t claude-resident-$NAME "2" Enter
 claude-resident $NAME check
 
 # 로그 확인
-tail -f ~/.local/state/claude-resident/$NAME/agent.log
+claude-resident $NAME logs
 
 # tmux 세션 직접 확인
-tmux attach -t claude-resident-$NAME
+claude-resident $NAME attach
 ```
 
 `check` 명령은 다음을 본다:
@@ -567,6 +554,7 @@ tmux attach -t claude-resident-$NAME
 - 인스턴스 `.env` 또는 fallback `.env`
 - `TELEGRAM_BOT_TOKEN`, `TELEGRAM_NOTIFY_CHAT_ID`, `WEBHOOK_PORT`
 - `TELEGRAM_STATE_DIR`, `CLAUDE_RESIDENT_PERMISSION_MODE` 반영 결과
+- JSON encoder (`jq` 또는 `python3`) 사용 가능 여부
 - tmux 세션 실행 여부
 
 ---
@@ -665,13 +653,15 @@ systemctl --user restart omx-bridge
     claude-resident-restart@.service   → ~/.config/systemd/user/
     claude-resident-health@.service    → ~/.config/systemd/user/
     claude-resident-health@.timer      → ~/.config/systemd/user/
+    install.sh                         → installs binary + systemd units
     CLAUDE.md                          → ~/.config/claude-resident/<name>/CLAUDE.md
     memory/
         soul.md.example    → ~/.config/claude-resident/<name>/memory/soul.md
         user.md.example    → ~/.config/claude-resident/<name>/memory/user.md
         workflow.md.example → ~/.config/claude-resident/<name>/memory/workflow.md
         projects.md.example → ~/.config/claude-resident/<name>/memory/projects.md
-        daily.md.example   → ~/.config/claude-resident/<name>/memory/daily/YYYY-MM-DD.md
+        daily/
+            YYYY-MM-DD.md.example → ~/.config/claude-resident/<name>/memory/daily/YYYY-MM-DD.md
 
     (runtime)
     ~/.local/state/claude-resident/<name>/agent.log
@@ -690,10 +680,11 @@ systemctl --user restart claude-resident@andy
 
 # 로그
 journalctl --user -u claude-resident@andy -f
-tail -f ~/.local/state/claude-resident/andy/agent.log
+claude-resident andy logs
 ```
 
 > `agent.log`는 TTY 제어문자를 제거한 plain-text 로그를 남기도록 되어 있다. resident가 실제로 어떤 메시지를 받았고 어떤 상태로 올라왔는지 확인하는 용도로 쓴다.
+> 로그에는 타임스탬프가 붙으며, 시작 시 `CLAUDE_RESIDENT_LOG_ROTATE_BYTES`를 초과한 `agent.log`는 `agent.log.1`로 이동된다.
 
 ---
 
