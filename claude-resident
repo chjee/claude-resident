@@ -3,7 +3,7 @@
 # claude-resident — Claude Code + Telegram 에이전트 관리
 # =====================================================
 # 사용법:
-#   claude-resident <name> [start|stop|restart|status|check|shutdown|cleanup-memory]
+#   claude-resident <name> [start|stop|restart|status|check|shutdown|cleanup-memory|logs|attach]
 #
 # 예:
 #   claude-resident andy start
@@ -12,11 +12,13 @@
 #   claude-resident andy status
 #   claude-resident andy check
 #   claude-resident andy cleanup-memory
+#   claude-resident andy logs
+#   claude-resident andy attach
 #
 # 별칭: cr
 # =====================================================
 
-INSTANCE="${1:?사용법: claude-resident <name> [start|stop|restart|status|check|shutdown]}"
+INSTANCE="${1:?사용법: claude-resident <name> [start|stop|restart|status|check|shutdown|cleanup-memory|logs|attach]}"
 CMD="${2:-start}"
 
 # 인스턴스 설정/상태 디렉토리
@@ -38,9 +40,11 @@ BUN_BIN_DIR="${BUN_INSTALL:-$HOME/.bun}/bin"
 PERMISSION_MODE="${CLAUDE_RESIDENT_PERMISSION_MODE:-bypassPermissions}"
 STARTUP_TRIGGER_DELAY_SEC="${CLAUDE_RESIDENT_STARTUP_DELAY_SEC:-5}"
 TRIGGER_RETRY_DELAY_SEC="${CLAUDE_RESIDENT_TRIGGER_RETRY_DELAY_SEC:-2}"
+RESTART_DELAY_SEC="${CLAUDE_RESIDENT_RESTART_DELAY_SEC:-2}"
 STARTUP_TRIGGER_RETRIES="${CLAUDE_RESIDENT_STARTUP_RETRIES:-3}"
 SHUTDOWN_TRIGGER_RETRIES="${CLAUDE_RESIDENT_SHUTDOWN_RETRIES:-2}"
 DAILY_RETENTION_DAYS="${CLAUDE_RESIDENT_DAILY_RETENTION_DAYS:-60}"
+LOG_ROTATE_BYTES="${CLAUDE_RESIDENT_LOG_ROTATE_BYTES:-10485760}"
 
 # 디렉토리 초기화
 mkdir -p "$INSTANCE_CONFIG_DIR" "$INSTANCE_STATE_DIR" "$MEMORY_DIR"
@@ -50,7 +54,24 @@ INSTANCE_ENV_FILE="$INSTANCE_CONFIG_DIR/.env"
 ENV_FILE="${CLAUDE_RESIDENT_OMX_BRIDGE_ENV_FILE:-$WORKSPACE_DIR/omx-bridge/.env}"
 for _env in "$INSTANCE_ENV_FILE" "$ENV_FILE"; do
   if [ -f "$_env" ]; then
-    while IFS='=' read -r key val; do
+    while IFS='=' read -r key val || [ -n "$key" ]; do
+      key="${key#"${key%%[![:space:]]*}"}"
+      key="${key%"${key##*[![:space:]]}"}"
+      case "$key" in
+        ""|\#*) continue ;;
+      esac
+      key="${key#export }"
+      key="${key#"${key%%[![:space:]]*}"}"
+      key="${key%"${key##*[![:space:]]}"}"
+
+      val="${val%$'\r'}"
+      val="${val#"${val%%[![:space:]]*}"}"
+      val="${val%"${val##*[![:space:]]}"}"
+      val="${val#\"}"
+      val="${val%\"}"
+      val="${val#\'}"
+      val="${val%\'}"
+
       case "$key" in
         TELEGRAM_BOT_TOKEN|TELEGRAM_NOTIFY_CHAT_ID|WEBHOOK_PORT|TELEGRAM_STATE_DIR)
           # 인스턴스 .env가 우선 — 이미 설정된 값은 덮어쓰지 않음
@@ -63,7 +84,7 @@ done
 TELEGRAM_STATE_DIR="${TELEGRAM_STATE_DIR:-$DEFAULT_TELEGRAM_STATE_DIR}"
 
 log() {
-  printf '%s\n' "$*" | tee -a "$LOG_FILE"
+  printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" | tee -a "$LOG_FILE"
 }
 
 ensure_telegram_state() {
@@ -76,15 +97,19 @@ ensure_telegram_state() {
 
   if [ ! -f "$TELEGRAM_STATE_DIR/access.json" ] && [ -n "$TELEGRAM_NOTIFY_CHAT_ID" ]; then
     ( umask 077
-      cat > "$TELEGRAM_STATE_DIR/access.json" <<EOF
-{
-  "dmPolicy": "allowlist",
-  "allowFrom": ["$TELEGRAM_NOTIFY_CHAT_ID"],
-  "groups": {},
-  "pending": {}
-}
-EOF
-    )
+      if command -v jq >/dev/null 2>&1; then
+        jq -n --arg cid "$TELEGRAM_NOTIFY_CHAT_ID" \
+          '{"dmPolicy":"allowlist","allowFrom":[$cid],"groups":{},"pending":{}}' \
+          > "$TELEGRAM_STATE_DIR/access.json"
+      elif command -v python3 >/dev/null 2>&1; then
+        python3 -c \
+          'import json,sys; print(json.dumps({"dmPolicy":"allowlist","allowFrom":[sys.argv[1]],"groups":{},"pending":{}}))' \
+          "$TELEGRAM_NOTIFY_CHAT_ID" > "$TELEGRAM_STATE_DIR/access.json"
+      else
+        printf 'ERROR: jq or python3 required for access.json generation\n' >&2
+        exit 1
+      fi
+    ) || return 1
   fi
 }
 
@@ -93,12 +118,27 @@ send_telegram_text() {
   local retries="${2:-1}"
   local attempt=1
   local http_status=""
+  local payload
+
+  if command -v jq >/dev/null 2>&1; then
+    payload=$(jq -n \
+      --arg chat_id "$TELEGRAM_NOTIFY_CHAT_ID" \
+      --arg text "$text" \
+      '{"chat_id": $chat_id, "text": $text}') || return 1
+  elif command -v python3 >/dev/null 2>&1; then
+    payload=$(python3 -c \
+      'import json,sys; print(json.dumps({"chat_id": sys.argv[1], "text": sys.argv[2]}))' \
+      "$TELEGRAM_NOTIFY_CHAT_ID" "$text") || return 1
+  else
+    printf 'ERROR: jq or python3 required for JSON encoding\n' >&2
+    return 1
+  fi
 
   while [ "$attempt" -le "$retries" ]; do
     http_status=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
       "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
       -H "Content-Type: application/json" \
-      -d "{\"chat_id\": \"${TELEGRAM_NOTIFY_CHAT_ID}\", \"text\": \"${text}\"}")
+      -d "$payload")
 
     if [ "$http_status" = "200" ]; then
       return 0
@@ -136,6 +176,11 @@ start() {
     return
   fi
 
+  if [ -f "$LOG_FILE" ] && [ "$(stat -c%s "$LOG_FILE" 2>/dev/null || echo 0)" -gt "$LOG_ROTATE_BYTES" ]; then
+    mv "$LOG_FILE" "${LOG_FILE}.1"
+    log "[$INSTANCE] agent.log rotated (>${LOG_ROTATE_BYTES} bytes)"
+  fi
+
   if [ ! -x "$CLAUDE_BIN" ]; then
     echo "ERROR: Claude Code 바이너리를 찾지 못함: $CLAUDE_BIN"
     return 1
@@ -146,7 +191,7 @@ start() {
   fi
 
   echo "$INSTANCE 시작 중..."
-  ensure_telegram_state
+  ensure_telegram_state || return 1
   # bun이 PATH에 없어도 플러그인이 동작하도록 보장
   case ":$PATH:" in *":$BUN_BIN_DIR:"*) ;; *) PATH="$BUN_BIN_DIR:$PATH" ;; esac
 
@@ -184,7 +229,7 @@ start() {
 
   echo "$INSTANCE 시작됨."
   echo "접속: tmux attach -t $SESSION"
-  echo "로그: tail -f $LOG_FILE"
+  echo "로그: claude-resident $INSTANCE logs"
 }
 
 stop() {
@@ -269,11 +314,41 @@ check() {
     _warn "bun not found; Telegram plugin runtime may fail"
   fi
 
-  [ -d "$INSTANCE_CONFIG_DIR" ] && _ok "config dir: $INSTANCE_CONFIG_DIR" || _fail "missing config dir: $INSTANCE_CONFIG_DIR"
-  [ -d "$INSTANCE_STATE_DIR" ] && _ok "state dir: $INSTANCE_STATE_DIR" || _fail "missing state dir: $INSTANCE_STATE_DIR"
-  [ -f "$INSTANCE_CONFIG_DIR/CLAUDE.md" ] && _ok "CLAUDE.md present" || _warn "missing CLAUDE.md"
-  [ -f "$MEMORY_DIR/soul.md" ] && _ok "memory/soul.md present" || _warn "missing memory/soul.md"
-  [ -f "$MEMORY_DIR/user.md" ] && _ok "memory/user.md present" || _warn "missing memory/user.md"
+  if command -v jq >/dev/null 2>&1 || command -v python3 >/dev/null 2>&1; then
+    _ok "JSON encoder available (jq or python3)"
+  else
+    _warn "jq and python3 not found; Telegram JSON generation will fail"
+  fi
+
+  if [ -d "$INSTANCE_CONFIG_DIR" ]; then
+    _ok "config dir: $INSTANCE_CONFIG_DIR"
+  else
+    _fail "missing config dir: $INSTANCE_CONFIG_DIR"
+  fi
+
+  if [ -d "$INSTANCE_STATE_DIR" ]; then
+    _ok "state dir: $INSTANCE_STATE_DIR"
+  else
+    _fail "missing state dir: $INSTANCE_STATE_DIR"
+  fi
+
+  if [ -f "$INSTANCE_CONFIG_DIR/CLAUDE.md" ]; then
+    _ok "CLAUDE.md present"
+  else
+    _warn "missing CLAUDE.md"
+  fi
+
+  if [ -f "$MEMORY_DIR/soul.md" ]; then
+    _ok "memory/soul.md present"
+  else
+    _warn "missing memory/soul.md"
+  fi
+
+  if [ -f "$MEMORY_DIR/user.md" ]; then
+    _ok "memory/user.md present"
+  else
+    _warn "missing memory/user.md"
+  fi
 
   if [ -d "$DAILY_DIR" ]; then
     _ok "memory daily dir: $DAILY_DIR"
@@ -283,8 +358,17 @@ check() {
     _warn "missing memory/daily and legacy memory/recent.md"
   fi
 
-  [ -d "$TELEGRAM_STATE_DIR" ] && _ok "telegram state dir: $TELEGRAM_STATE_DIR" || _warn "missing telegram state dir: $TELEGRAM_STATE_DIR"
-  [ -f "$TELEGRAM_STATE_DIR/access.json" ] && _ok "telegram access file present" || _warn "missing telegram access file: $TELEGRAM_STATE_DIR/access.json"
+  if [ -d "$TELEGRAM_STATE_DIR" ]; then
+    _ok "telegram state dir: $TELEGRAM_STATE_DIR"
+  else
+    _warn "missing telegram state dir: $TELEGRAM_STATE_DIR"
+  fi
+
+  if [ -f "$TELEGRAM_STATE_DIR/access.json" ]; then
+    _ok "telegram access file present"
+  else
+    _warn "missing telegram access file: $TELEGRAM_STATE_DIR/access.json"
+  fi
 
   if [ -f "$INSTANCE_ENV_FILE" ]; then
     _ok "instance env present: $INSTANCE_ENV_FILE"
@@ -294,9 +378,23 @@ check() {
     _fail "no env source found (checked $INSTANCE_ENV_FILE and $ENV_FILE)"
   fi
 
-  [ -n "$TELEGRAM_BOT_TOKEN" ] && _ok "telegram bot token configured" || _fail "telegram bot token missing"
-  [ -n "$TELEGRAM_NOTIFY_CHAT_ID" ] && _ok "telegram notify chat id configured" || _warn "telegram notify chat id missing"
-  [ -n "$WEBHOOK_PORT" ] && _ok "webhook port configured: $WEBHOOK_PORT" || _warn "webhook port not configured; MCP defaults may apply"
+  if [ -n "$TELEGRAM_BOT_TOKEN" ]; then
+    _ok "telegram bot token configured"
+  else
+    _fail "telegram bot token missing"
+  fi
+
+  if [ -n "$TELEGRAM_NOTIFY_CHAT_ID" ]; then
+    _ok "telegram notify chat id configured"
+  else
+    _warn "telegram notify chat id missing"
+  fi
+
+  if [ -n "$WEBHOOK_PORT" ]; then
+    _ok "webhook port configured: $WEBHOOK_PORT"
+  else
+    _warn "webhook port not configured; MCP defaults may apply"
+  fi
 
   local global_telegram_env="${HOME}/.claude/channels/telegram/.env"
   if [ -n "$TELEGRAM_BOT_TOKEN" ] && [ -f "$global_telegram_env" ]; then
@@ -319,7 +417,11 @@ check() {
     _warn "telegram poller pid missing; expected while session is running"
   fi
 
-  [ -d "$WORKSPACE_DIR" ] && _ok "workspace dir: $WORKSPACE_DIR" || _warn "workspace dir missing: $WORKSPACE_DIR"
+  if [ -d "$WORKSPACE_DIR" ]; then
+    _ok "workspace dir: $WORKSPACE_DIR"
+  else
+    _warn "workspace dir missing: $WORKSPACE_DIR"
+  fi
   _ok "permission mode: $PERMISSION_MODE"
 
   if tmux has-session -t "$SESSION" 2>/dev/null; then
@@ -345,13 +447,28 @@ status() {
   fi
 }
 
+logs() {
+  tail -F "$LOG_FILE"
+}
+
+attach_session() {
+  if tmux has-session -t "$SESSION" 2>/dev/null; then
+    tmux attach -t "$SESSION"
+  else
+    echo "$INSTANCE tmux 세션이 없습니다. (session: $SESSION)"
+    return 1
+  fi
+}
+
 case "$CMD" in
   start)    start ;;
   stop)     stop ;;
-  restart)  stop; sleep 2; start ;;
+  restart)  stop; sleep "$RESTART_DELAY_SEC"; start ;;
   status)   status ;;
   check)    check ;;
   shutdown) shutdown ;;  # systemd ExecStop 전용
   cleanup-memory) cleanup_memory ;;
-  *)        echo "사용법: claude-resident <name> [start|stop|restart|status|check|shutdown|cleanup-memory]" ;;
+  logs)     logs ;;
+  attach)   attach_session ;;
+  *)        echo "사용법: claude-resident <name> [start|stop|restart|status|check|shutdown|cleanup-memory|logs|attach]" ;;
 esac
