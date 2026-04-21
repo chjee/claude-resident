@@ -3,12 +3,14 @@ set -euo pipefail
 
 SYSTEMD_USER_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 BIN_DIR="$HOME/.local/bin"
+LIB_DIR="$HOME/.local/lib/claude-resident"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-mkdir -p "$SYSTEMD_USER_DIR" "$BIN_DIR"
+mkdir -p "$SYSTEMD_USER_DIR" "$BIN_DIR" "$LIB_DIR"
 
 cp "$SCRIPT_DIR/claude-resident" "$BIN_DIR/claude-resident"
 chmod +x "$BIN_DIR/claude-resident"
+cp "$SCRIPT_DIR"/lib/claude-resident/*.sh "$LIB_DIR/"
 
 CR_LINK="$BIN_DIR/cr"
 if [ -e "$CR_LINK" ] && [ "$(readlink -f "$CR_LINK")" != "$(readlink -f "$BIN_DIR/claude-resident")" ]; then
