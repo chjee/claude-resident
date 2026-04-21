@@ -17,31 +17,61 @@ portable_days_ago() {
   fi
 }
 
+acquire_daily_lock() {
+  mkdir -p "$MEMORY_DIR"
+
+  if mkdir "$DAILY_LOCK_DIR" 2>/dev/null; then
+    {
+      printf 'pid=%s\n' "$$"
+      printf 'created_at=%s\n' "$(timestamp_now)"
+      printf 'command=%s\n' "$CMD"
+    } > "$DAILY_LOCK_DIR/owner" || true
+    return 0
+  fi
+
+  log "[$INSTANCE] WARN: daily lock 사용 중 — cleanup-memory 생략: $DAILY_LOCK_DIR"
+  return 1
+}
+
+release_daily_lock() {
+  rm -f "$DAILY_LOCK_DIR/owner"
+  rmdir "$DAILY_LOCK_DIR" 2>/dev/null || true
+}
+
 cleanup_memory() {
   mkdir -p "$DAILY_DIR"
+  if ! acquire_daily_lock; then
+    return 0
+  fi
 
   local cleaned=0
   local skipped=0
   local cutoff
+  local result=0
   local candidates='(\[memory-candidate\]|\[project-candidate\]|\[workflow-candidate\])'
-  cutoff=$(portable_days_ago "$DAILY_RETENTION_DAYS") || return 1
+  cutoff=$(portable_days_ago "$DAILY_RETENTION_DAYS") || result=$?
 
-  for daily_file in "$DAILY_DIR"/????-??-??.md; do
-    [ -e "$daily_file" ] || continue
-    local daily_name="${daily_file##*/}"
-    local daily_date="${daily_name%.md}"
-    [ "$daily_date" \< "$cutoff" ] || continue
+  if [ "$result" -eq 0 ]; then
+    for daily_file in "$DAILY_DIR"/????-??-??.md; do
+      [ -e "$daily_file" ] || continue
+      local daily_name="${daily_file##*/}"
+      local daily_date="${daily_name%.md}"
+      [ "$daily_date" \< "$cutoff" ] || continue
 
-    if grep -Eq "$candidates" "$daily_file"; then
-      log "[$INSTANCE] WARN: candidate tag 남은 오래된 daily 유지: $daily_file"
-      skipped=$((skipped + 1))
-      continue
-    fi
+      if grep -Eq "$candidates" "$daily_file"; then
+        log "[$INSTANCE] WARN: candidate tag 남은 오래된 daily 유지: $daily_file"
+        skipped=$((skipped + 1))
+        continue
+      fi
 
-    rm -f "$daily_file"
-    log "[$INSTANCE] 오래된 daily 삭제: $daily_file"
-    cleaned=$((cleaned + 1))
-  done
+      rm -f "$daily_file"
+      log "[$INSTANCE] 오래된 daily 삭제: $daily_file"
+      cleaned=$((cleaned + 1))
+    done
 
-  log "[$INSTANCE] daily cleanup 완료: deleted=$cleaned skipped=$skipped retention_days=$DAILY_RETENTION_DAYS cutoff=$cutoff"
+    log "[$INSTANCE] daily cleanup 완료: deleted=$cleaned skipped=$skipped retention_days=$DAILY_RETENTION_DAYS cutoff=$cutoff"
+  fi
+
+  release_daily_lock
+  return "$result"
 }

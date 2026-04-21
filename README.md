@@ -215,6 +215,7 @@ last-active.md는 daily append 성공 후 갱신한다.
 - `memory/daily/YYYY-MM-DD.md`는 최근 60일만 보존
 - 60일 초과 파일은 새벽 restart maintenance 단계에서 정리
 - `[memory-candidate]`, `[project-candidate]`, `[workflow-candidate]` 태그가 남은 파일은 삭제하지 않고 warning만 남김
+- daily append/cleanup은 `memory/.daily.lock` lock dir을 사용해 동시 쓰기와 삭제가 겹치지 않게 함
 
 ---
 
@@ -291,6 +292,7 @@ systemctl --user enable --now claude-resident-health@andy.timer
 
 새벽 재시작 전에는 `claude-resident <name> cleanup-memory`가 실행되어 60일 초과 daily 파일을 정리한다.
 candidate 태그가 남은 파일은 삭제하지 않고 warning 로그만 남긴다.
+`memory/.daily.lock`이 이미 있으면 다른 daily writer가 작업 중인 것으로 보고 cleanup은 삭제 없이 생략한다.
 
 ### 프로세스 소멸 복구 (헬스체크 타이머)
 
@@ -565,6 +567,7 @@ claude-resident $NAME attach
 - `TELEGRAM_STATE_DIR`, `CLAUDE_RESIDENT_PERMISSION_MODE` 반영 결과
 - JSON encoder (`jq` 또는 `python3`) 사용 가능 여부
 - daily cleanup 날짜 계산 fallback (`GNU date`, `BSD date -v`, `python3`) 사용 가능 여부
+- daily cleanup lock은 `memory/.daily.lock` lock dir 사용
 - 마지막 health state 요약 (`action`, `reason`, `checked_at`, 재시작 전후 세션 존재 여부)
 - tmux 세션 실행 여부
 

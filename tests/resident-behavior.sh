@@ -293,6 +293,30 @@ test_cleanup_memory_preserves_candidates_and_deletes_plain_old_daily() {
     printf 'expected candidate daily file to be preserved\n' >&2
     return 1
   }
+  [ ! -e "$TEST_TMP/config/claude-resident/test/memory/.daily.lock" ] || {
+    printf 'expected cleanup-memory to release daily lock\n' >&2
+    return 1
+  }
+}
+
+test_cleanup_memory_skips_when_daily_lock_is_held() {
+  local memory_dir="$TEST_TMP/config/claude-resident/test/memory"
+  local daily_dir="$memory_dir/daily"
+  mkdir -p "$daily_dir" "$memory_dir/.daily.lock"
+  local old_date
+  old_date="$(date -d '2 days ago' +%F)"
+  printf 'plain old note\n' > "$daily_dir/$old_date.md"
+  printf 'CLAUDE_RESIDENT_DAILY_RETENTION_DAYS=1\n' > "$TEST_TMP/config/claude-resident/test/.env"
+
+  run_resident test cleanup-memory >/dev/null 2>&1 || return 1
+  [ -e "$daily_dir/$old_date.md" ] || {
+    printf 'expected cleanup-memory to preserve file when daily lock is held\n' >&2
+    return 1
+  }
+  [ -d "$memory_dir/.daily.lock" ] || {
+    printf 'expected externally held daily lock to remain\n' >&2
+    return 1
+  }
 }
 
 test_health_restart_records_state() {
@@ -337,6 +361,7 @@ run_test "start returns non-zero when tmux new-session fails" test_start_new_ses
 run_test "start cleans session when pipe-pane fails" test_start_pipe_failure_cleans_session
 run_test "shutdown uses CLAUDE_RESIDENT_SHUTDOWN_WAIT_SEC" test_shutdown_uses_configured_wait
 run_test "cleanup-memory deletes old daily but preserves candidate daily" test_cleanup_memory_preserves_candidates_and_deletes_plain_old_daily
+run_test "cleanup-memory skips deletion when daily lock is held" test_cleanup_memory_skips_when_daily_lock_is_held
 run_test "health restart branch records state" test_health_restart_records_state
 run_test "installed bin can load ../lib/claude-resident modules" test_installed_layout_loads_libs
 
