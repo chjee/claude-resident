@@ -32,6 +32,8 @@ HEALTH_STATE_FILE="$INSTANCE_STATE_DIR/health-state.json"
 MEMORY_DIR="$INSTANCE_CONFIG_DIR/memory"
 # shellcheck disable=SC2034
 DAILY_DIR="$MEMORY_DIR/daily"
+# shellcheck disable=SC2034
+DAILY_LOCK_DIR="$MEMORY_DIR/.daily.lock"
 DEFAULT_TELEGRAM_STATE_DIR="$INSTANCE_CONFIG_DIR/telegram"
 
 # tmux 세션 이름

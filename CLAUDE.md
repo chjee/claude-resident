@@ -137,6 +137,7 @@ curl -s -X POST http://localhost:3992/jobs \
 ### 업데이트 방법
 
 Asia/Seoul 기준 날짜로 `memory/daily/YYYY-MM-DD.md` 파일에 append한다. 오늘 파일이 없으면 생성한다.
+daily 파일을 쓰기 전에는 `memory/.daily.lock` 디렉토리를 생성해 lock을 잡고, append와 `memory/last-active.md` 갱신이 끝나면 lock 디렉토리를 제거한다. lock 디렉토리가 이미 있으면 다른 저장/정리 작업이 진행 중인 것이므로 잠시 후 재시도한다.
 
 ```markdown
 # YYYY-MM-DD
@@ -161,10 +162,12 @@ Asia/Seoul 기준 날짜로 `memory/daily/YYYY-MM-DD.md` 파일에 append한다.
 
 저장 순서:
 
-1. `memory/daily/YYYY-MM-DD.md` 생성 또는 append
-2. append 성공 확인
-3. `memory/last-active.md` 갱신
-4. Telegram 완료 메시지 전송
+1. `mkdir memory/.daily.lock` 성공 확인
+2. `memory/daily/YYYY-MM-DD.md` 생성 또는 append
+3. append 성공 확인
+4. `memory/last-active.md` 갱신
+5. `rmdir memory/.daily.lock`
+6. Telegram 완료 메시지 전송
 
 `memory/last-active.md` 형식:
 
@@ -188,6 +191,7 @@ Asia/Seoul 기준 날짜로 `memory/daily/YYYY-MM-DD.md` 파일에 append한다.
 - 60일 초과 파일 정리는 새벽 `claude-resident-restart@.service` maintenance 단계에서 수행한다.
 - `[memory-candidate]`, `[project-candidate]`, `[workflow-candidate]` 태그가 남은 파일은 삭제하지 않고 warning만 남긴다.
 - startup/shutdown 경로에서는 오래된 daily 삭제를 하지 않는다.
+- cleanup과 daily append는 같은 `memory/.daily.lock`을 사용한다. lock이 있으면 cleanup은 삭제를 건너뛴다.
 
 ### 과도기 규칙
 
