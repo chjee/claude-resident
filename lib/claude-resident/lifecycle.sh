@@ -60,16 +60,19 @@ start() {
       return 0
     fi
     log "[$INSTANCE] ERROR: tmux session 생성 실패: $tmux_output"
+    log_event "error" "session_start_failed" "tmux new-session failed" "output=$tmux_output"
     return 1
   fi
 
   # pipe-pane으로 로깅 (PTY를 유지하면서 ANSI/OSC escape와 제어문자는 제거)
   if ! tmux pipe-pane -t "$SESSION" "perl -CSDA -pe 's/\\e\\[[0-?]*[ -\\/]*[@-~]//g; s/\\e\\][^\\a]*(?:\\a|\\e\\\\)//gs; s/\\x08//g' | col -b >> $log_file_q"; then
     log "[$INSTANCE] ERROR: tmux pipe-pane 로깅 설정 실패 — 세션 정리"
+    log_event "error" "pipe_pane_failed" "tmux pipe-pane setup failed, session cleaned up"
     tmux kill-session -t "$SESSION" 2>/dev/null || true
     return 1
   fi
 
+  log_event "info" "session_started" "tmux session created" "session=$SESSION"
   # 백그라운드에서 startup 트리거 전송
   send_startup_trigger &
 
@@ -90,19 +93,56 @@ stop() {
 shutdown() {
   # systemd ExecStop 전용 — daily 저장 후 종료
   log "[$INSTANCE] 종료 신호 수신 — daily 저장 요청 중..."
+  log_event "info" "shutdown_requested" "systemd ExecStop received"
 
   if [ -n "$TELEGRAM_BOT_TOKEN" ] && [ -n "$TELEGRAM_NOTIFY_CHAT_ID" ]; then
     if send_telegram_text "__SHUTDOWN__" "$SHUTDOWN_TRIGGER_RETRIES"; then
       log "[$INSTANCE] __SHUTDOWN__ 전송 완료 — ${SHUTDOWN_WAIT_SEC}초 대기 (daily 저장 시간)"
+      log_event "info" "shutdown_trigger_sent" "__SHUTDOWN__ delivered" "wait_sec=$SHUTDOWN_WAIT_SEC"
       sleep "$SHUTDOWN_WAIT_SEC"
     else
       log "[$INSTANCE] WARN: __SHUTDOWN__ 전송 실패 — daily 저장 없이 종료될 수 있음"
+      log_event "warn" "shutdown_trigger_failed" "telegram send failed, daily may not be saved"
     fi
   else
     log "[$INSTANCE] WARN: 텔레그램 설정 없음 — 즉시 종료"
+    log_event "warn" "shutdown_no_telegram" "telegram not configured, shutting down immediately"
+  fi
+
+  log_event "info" "session_stopping" "killing tmux session"
+  stop
+}
+
+graceful_restart() {
+  # daily 저장 후 재시작 — 운영 세션을 안전하게 교체할 때 사용
+  # systemd ExecStop 경로와 달리 직접 호출용
+  if ! tmux has-session -t "$SESSION" 2>/dev/null; then
+    log "[$INSTANCE] graceful-restart: session 없음 — 바로 시작"
+    log_event "info" "graceful_restart_no_session" "no existing session, starting fresh"
+    start
+    return
+  fi
+
+  log "[$INSTANCE] graceful-restart: __SHUTDOWN__ 전송 후 재시작"
+  log_event "info" "graceful_restart_requested" "sending __SHUTDOWN__ before restart"
+
+  if [ -n "$TELEGRAM_BOT_TOKEN" ] && [ -n "$TELEGRAM_NOTIFY_CHAT_ID" ]; then
+    if send_telegram_text "__SHUTDOWN__" "$SHUTDOWN_TRIGGER_RETRIES"; then
+      log "[$INSTANCE] graceful-restart: ${SHUTDOWN_WAIT_SEC}초 대기"
+      log_event "info" "graceful_restart_waiting" "__SHUTDOWN__ sent, waiting for daily save" "wait_sec=$SHUTDOWN_WAIT_SEC"
+      sleep "$SHUTDOWN_WAIT_SEC"
+    else
+      log "[$INSTANCE] WARN: graceful-restart: __SHUTDOWN__ 전송 실패 — daily 저장 없이 재시작"
+      log_event "warn" "graceful_restart_trigger_failed" "telegram send failed, restarting without daily save"
+    fi
+  else
+    log "[$INSTANCE] WARN: graceful-restart: 텔레그램 없음 — 즉시 재시작"
+    log_event "warn" "graceful_restart_no_telegram" "no telegram config, restarting immediately"
   fi
 
   stop
+  sleep "$RESTART_DELAY_SEC"
+  start
 }
 
 status() {
