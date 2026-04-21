@@ -8,6 +8,7 @@ RemainAfterExit=yes
 WorkingDirectory=%h
 ExecStart=%h/.local/bin/claude-resident %i start
 ExecStop=%h/.local/bin/claude-resident %i shutdown
+# Keep this greater than CLAUDE_RESIDENT_SHUTDOWN_WAIT_SEC (default: 20s).
 TimeoutStopSec=30
 Environment=CLAUDE_RESIDENT_WORKSPACE_DIR=%h/workspace
 Environment=CLAUDE_RESIDENT_OMX_BRIDGE_ENV_FILE=%h/workspace/omx-bridge/.env
