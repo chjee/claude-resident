@@ -222,7 +222,7 @@ last-active.md는 daily append 성공 후 갱신한다.
 
 ### claude-resident 스크립트
 
-`<name> [start|stop|restart|status|check|health|shutdown|cleanup-memory|logs|attach]` 형식으로 인스턴스별 관리. 진입점은 `claude-resident`, Telegram/health helper는 `lib/claude-resident/`에 둔다.
+`<name> [start|stop|restart|status|check|health|shutdown|cleanup-memory|logs|attach]` 형식으로 인스턴스별 관리. 진입점은 `claude-resident`, 명령별 helper module은 `lib/claude-resident/`에 둔다.
 
 ```
 claude-resident andy start 동작:
