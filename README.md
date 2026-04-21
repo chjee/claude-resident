@@ -243,6 +243,7 @@ claude-resident andy start 동작:
 # 설치
 ./install.sh
 systemctl --user enable --now claude-resident@andy.service
+systemctl --user enable --now claude-resident-health@andy.timer
 ```
 
 ### WSL2 수동 시작 (systemd 없이)
@@ -430,7 +431,9 @@ WEBHOOK_PORT=3993
 # CLAUDE_RESIDENT_TRIGGER_RETRY_DELAY_SEC=2
 # CLAUDE_RESIDENT_STARTUP_RETRIES=3
 # CLAUDE_RESIDENT_SHUTDOWN_RETRIES=2
+# CLAUDE_RESIDENT_SHUTDOWN_WAIT_SEC=20
 # CLAUDE_RESIDENT_RESTART_DELAY_SEC=2
+# CLAUDE_RESIDENT_DAILY_RETENTION_DAYS=60
 # CLAUDE_RESIDENT_LOG_ROTATE_BYTES=10485760
 EOF
 ```
@@ -440,6 +443,7 @@ EOF
 > `WEBHOOK_PORT`는 resident별 omx-bridge MCP 알림 포트를 구분할 때 사용한다.
 > `TELEGRAM_STATE_DIR`는 Telegram plugin의 `access.json`, `bot.pid`, inbox를 인스턴스별로 분리한다.
 > Telegram API JSON payload와 `access.json` 생성을 위해 `jq` 또는 `python3` 중 하나가 필요하다.
+> `cleanup-memory`의 날짜 계산은 GNU `date`, BSD `date -v`, `python3` 순서로 fallback한다.
 
 > ⚠️ Telegram을 resident 전용으로 쓸 경우, 같은 bot token을 `~/.claude/channels/telegram/.env`에 두지 않는다.
 > 전역 Claude 세션이 같은 token으로 Telegram plugin을 띄우면 Telegram long polling 소유권을 가져가 resident가 응답하지 않을 수 있다.
@@ -500,6 +504,7 @@ cat ~/.openclaw/openclaw.json | python3 -m json.tool | grep -E "botToken|allowFr
 
 ```bash
 systemctl --user start claude-resident@$NAME.service
+systemctl --user enable --now claude-resident-health@$NAME.timer
 systemctl --user status claude-resident@$NAME.service
 claude-resident $NAME check
 ```
@@ -509,6 +514,9 @@ claude-resident $NAME check
 
 - `claude-resident $NAME check`
 - `tmux has-session -t claude-resident-$NAME`
+
+`claude-resident-health@.timer`는 5분마다 tmux 세션 생존 여부를 확인하고, main service가 active인데 세션이 없으면 재시작한다.
+`ExecStop`의 기본 shutdown wait는 20초이며, `claude-resident@.service`의 `TimeoutStopSec=30`은 이 기본값보다 크게 잡혀 있다. 인스턴스별로 wait를 늘릴 때는 systemd drop-in에서 `TimeoutStopSec`도 함께 늘린다.
 
 **최초 기동 시 `bypassPermissions` 확인 처리**:
 
@@ -555,6 +563,7 @@ claude-resident $NAME attach
 - `TELEGRAM_BOT_TOKEN`, `TELEGRAM_NOTIFY_CHAT_ID`, `WEBHOOK_PORT`
 - `TELEGRAM_STATE_DIR`, `CLAUDE_RESIDENT_PERMISSION_MODE` 반영 결과
 - JSON encoder (`jq` 또는 `python3`) 사용 가능 여부
+- daily cleanup 날짜 계산 fallback (`GNU date`, `BSD date -v`, `python3`) 사용 가능 여부
 - tmux 세션 실행 여부
 
 ---
