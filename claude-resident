@@ -53,40 +53,20 @@ mkdir -p "$INSTANCE_CONFIG_DIR" "$INSTANCE_STATE_DIR" "$MEMORY_DIR"
 # .env에서 텔레그램 설정 로드 (인스턴스별 .env 우선, 없으면 omx-bridge .env fallback)
 INSTANCE_ENV_FILE="$INSTANCE_CONFIG_DIR/.env"
 ENV_FILE="${CLAUDE_RESIDENT_OMX_BRIDGE_ENV_FILE:-$WORKSPACE_DIR/omx-bridge/.env}"
-for _env in "$INSTANCE_ENV_FILE" "$ENV_FILE"; do
-  if [ -f "$_env" ]; then
-    while IFS='=' read -r key val || [ -n "$key" ]; do
-      key="${key#"${key%%[![:space:]]*}"}"
-      key="${key%"${key##*[![:space:]]}"}"
-      case "$key" in
-        ""|\#*) continue ;;
-      esac
-      key="${key#export }"
-      key="${key#"${key%%[![:space:]]*}"}"
-      key="${key%"${key##*[![:space:]]}"}"
 
-      val="${val%$'\r'}"
-      val="${val#"${val%%[![:space:]]*}"}"
-      val="${val%"${val##*[![:space:]]}"}"
-      val="${val#\"}"
-      val="${val%\"}"
-      val="${val#\'}"
-      val="${val%\'}"
-
-      case "$key" in
-        TELEGRAM_BOT_TOKEN|TELEGRAM_NOTIFY_CHAT_ID|WEBHOOK_PORT|TELEGRAM_STATE_DIR|\
-        CLAUDE_RESIDENT_PERMISSION_MODE|CLAUDE_RESIDENT_STARTUP_DELAY_SEC|\
-        CLAUDE_RESIDENT_TRIGGER_RETRY_DELAY_SEC|CLAUDE_RESIDENT_RESTART_DELAY_SEC|\
-        CLAUDE_RESIDENT_STARTUP_RETRIES|CLAUDE_RESIDENT_SHUTDOWN_RETRIES|\
-        CLAUDE_RESIDENT_SHUTDOWN_WAIT_SEC|CLAUDE_RESIDENT_DAILY_RETENTION_DAYS|\
-        CLAUDE_RESIDENT_LOG_ROTATE_BYTES)
-          # 인스턴스 .env가 우선 — 이미 설정된 값은 덮어쓰지 않음
-          [ -z "${!key}" ] && export "$key=$val"
-          ;;
-      esac
-    done < "$_env"
+# env.sh는 load_resident_libs 전에 필요하므로 직접 source
+_script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+_env_sh=""
+for _candidate in "$_script_dir/lib/claude-resident/env.sh" "$_script_dir/../lib/claude-resident/env.sh"; do
+  if [ -f "$_candidate" ]; then
+    _env_sh="$(cd "$(dirname "$_candidate")" && pwd)/$(basename "$_candidate")"
+    break
   fi
 done
+[ -n "$_env_sh" ] || { printf 'ERROR: cannot find lib/claude-resident/env.sh\n' >&2; exit 1; }
+# shellcheck source=/dev/null
+. "$_env_sh"
+load_instance_env "$INSTANCE_ENV_FILE" "$ENV_FILE"
 TELEGRAM_STATE_DIR="${TELEGRAM_STATE_DIR:-$DEFAULT_TELEGRAM_STATE_DIR}"
 # Used by sourced modules under lib/claude-resident.
 # shellcheck disable=SC2034
@@ -113,6 +93,36 @@ log() {
   printf '%s\n' "$line"
   if ! printf '%s\n' "$line" >> "$LOG_FILE"; then
     printf 'WARN: failed to write log file: %s\n' "$LOG_FILE" >&2
+  fi
+}
+
+# 구조화 이벤트를 agent-events.jsonl에 ndjson으로 기록
+# 사용: log_event "level" "event_type" "message" [key=value ...]
+log_event() {
+  local level="${1:?level is required}"
+  local event="${2:?event_type is required}"
+  local message="${3:?message is required}"
+  shift 3
+  local events_file="${LOG_FILE%.log}-events.jsonl"
+  local ts
+  ts=$(timestamp_now)
+  local extra=""
+  local kv
+  for kv in "$@"; do
+    local k="${kv%%=*}"
+    local v="${kv#*=}"
+    extra="${extra}, $(printf '"%s": "%s"' "$(json_escape "$k")" "$(json_escape "$v")")"
+  done
+  local entry
+  entry=$(printf '{"ts":"%s","level":"%s","instance":"%s","event":"%s","msg":"%s"%s}' \
+    "$(json_escape "$ts")" \
+    "$(json_escape "$level")" \
+    "$(json_escape "$INSTANCE")" \
+    "$(json_escape "$event")" \
+    "$(json_escape "$message")" \
+    "$extra")
+  if ! printf '%s\n' "$entry" >> "$events_file"; then
+    printf 'WARN: failed to write events file: %s\n' "$events_file" >&2
   fi
 }
 
@@ -169,7 +179,7 @@ load_resident_libs() {
     return 1
   fi
 
-  for lib_file in telegram.sh health.sh memory.sh lifecycle.sh check.sh; do
+  for lib_file in env.sh telegram.sh health.sh memory.sh lifecycle.sh check.sh; do
     if [ ! -f "$lib_dir/$lib_file" ]; then
       printf 'ERROR: missing claude-resident lib file: %s\n' "$lib_dir/$lib_file" >&2
       return 1
@@ -182,15 +192,16 @@ load_resident_libs() {
 load_resident_libs || exit 1
 
 case "$CMD" in
-  start)    start ;;
-  stop)     stop ;;
-  restart)  stop; sleep "$RESTART_DELAY_SEC"; start ;;
-  status)   status ;;
-  check)    check ;;
-  health)   health ;;
-  shutdown) shutdown ;;  # systemd ExecStop 전용
-  cleanup-memory) cleanup_memory ;;
-  logs)     logs ;;
-  attach)   attach_session ;;
-  *)        echo "사용법: claude-resident <name> [start|stop|restart|status|check|health|shutdown|cleanup-memory|logs|attach]" ;;
+  start)            start ;;
+  stop)             stop ;;
+  restart)          stop; sleep "$RESTART_DELAY_SEC"; start ;;
+  graceful-restart) graceful_restart ;;
+  status)           status ;;
+  check)            check ;;
+  health)           health ;;
+  shutdown)         shutdown ;;  # systemd ExecStop 전용
+  cleanup-memory)   cleanup_memory ;;
+  logs)             logs ;;
+  attach)           attach_session ;;
+  *)        echo "사용법: claude-resident <name> [start|stop|restart|graceful-restart|status|check|health|shutdown|cleanup-memory|logs|attach]" ;;
 esac
