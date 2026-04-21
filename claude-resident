@@ -82,9 +82,13 @@ for _env in "$INSTANCE_ENV_FILE" "$ENV_FILE"; do
 done
 TELEGRAM_STATE_DIR="${TELEGRAM_STATE_DIR:-$DEFAULT_TELEGRAM_STATE_DIR}"
 PERMISSION_MODE="${CLAUDE_RESIDENT_PERMISSION_MODE:-bypassPermissions}"
+# Used by sourced modules under lib/claude-resident.
+# shellcheck disable=SC2034
 STARTUP_TRIGGER_DELAY_SEC="${CLAUDE_RESIDENT_STARTUP_DELAY_SEC:-5}"
+# shellcheck disable=SC2034
 TRIGGER_RETRY_DELAY_SEC="${CLAUDE_RESIDENT_TRIGGER_RETRY_DELAY_SEC:-2}"
 RESTART_DELAY_SEC="${CLAUDE_RESIDENT_RESTART_DELAY_SEC:-2}"
+# shellcheck disable=SC2034
 STARTUP_TRIGGER_RETRIES="${CLAUDE_RESIDENT_STARTUP_RETRIES:-3}"
 SHUTDOWN_TRIGGER_RETRIES="${CLAUDE_RESIDENT_SHUTDOWN_RETRIES:-2}"
 SHUTDOWN_WAIT_SEC="${CLAUDE_RESIDENT_SHUTDOWN_WAIT_SEC:-20}"
@@ -134,87 +138,6 @@ json_encoder_available() {
   command -v jq >/dev/null 2>&1 || command -v python3 >/dev/null 2>&1
 }
 
-write_access_json() {
-  local target="${1:?target is required}"
-  local chat_id="${2:?chat_id is required}"
-
-  if command -v jq >/dev/null 2>&1; then
-    jq -n --arg cid "$chat_id" \
-      '{"dmPolicy":"allowlist","allowFrom":[$cid],"groups":{},"pending":{}}' \
-      > "$target"
-  elif command -v python3 >/dev/null 2>&1; then
-    python3 -c \
-      'import json,sys; print(json.dumps({"dmPolicy":"allowlist","allowFrom":[sys.argv[1]],"groups":{},"pending":{}}))' \
-      "$chat_id" > "$target"
-  else
-    printf 'ERROR: jq or python3 required for access.json generation\n' >&2
-    return 1
-  fi
-}
-
-build_telegram_payload() {
-  local chat_id="${1:?chat_id is required}"
-  local text="${2:?text is required}"
-
-  if command -v jq >/dev/null 2>&1; then
-    jq -n \
-      --arg chat_id "$chat_id" \
-      --arg text "$text" \
-      '{"chat_id": $chat_id, "text": $text}'
-  elif command -v python3 >/dev/null 2>&1; then
-    python3 -c \
-      'import json,sys; print(json.dumps({"chat_id": sys.argv[1], "text": sys.argv[2]}))' \
-      "$chat_id" "$text"
-  else
-    printf 'ERROR: jq or python3 required for JSON encoding\n' >&2
-    return 1
-  fi
-}
-
-write_health_state() {
-  local checked_at="${1:?checked_at is required}"
-  local service_active="${2:?service_active is required}"
-  local session_exists_before="${3:?session_exists_before is required}"
-  local action="${4:?action is required}"
-  local reason="${5:?reason is required}"
-  local restart_requested_at="${6:-}"
-  local restart_exit_code="${7:-}"
-  local session_exists_after="${8:-}"
-  local tmp_file="${HEALTH_STATE_FILE}.tmp.$$"
-
-  {
-    printf '{\n'
-    printf '  "checked_at": %s,\n' "$(json_string_or_null "$checked_at")"
-    printf '  "instance": %s,\n' "$(json_string_or_null "$INSTANCE")"
-    printf '  "service_name": %s,\n' "$(json_string_or_null "claude-resident@$INSTANCE.service")"
-    printf '  "service_active": %s,\n' "$service_active"
-    printf '  "session_name": %s,\n' "$(json_string_or_null "$SESSION")"
-    printf '  "session_exists_before": %s,\n' "$session_exists_before"
-    printf '  "action": %s,\n' "$(json_string_or_null "$action")"
-    printf '  "reason": %s,\n' "$(json_string_or_null "$reason")"
-    printf '  "restart_requested_at": %s,\n' "$(json_string_or_null "$restart_requested_at")"
-    if [ -n "$restart_exit_code" ]; then
-      printf '  "restart_exit_code": %s,\n' "$restart_exit_code"
-    else
-      printf '  "restart_exit_code": null,\n'
-    fi
-    printf '  "session_exists_after": %s\n' "$(json_bool_or_null "$session_exists_after")"
-    printf '}\n'
-  } > "$tmp_file" || {
-    rm -f "$tmp_file"
-    return 1
-  }
-
-  mv "$tmp_file" "$HEALTH_STATE_FILE"
-}
-
-record_health_state() {
-  if ! write_health_state "$@"; then
-    log "[$INSTANCE] ERROR: health state 기록 실패: $HEALTH_STATE_FILE"
-    return 1
-  fi
-}
-
 portable_days_ago() {
   local days="${1:?days is required}"
 
@@ -232,62 +155,36 @@ portable_days_ago() {
   fi
 }
 
-ensure_telegram_state() {
-  mkdir -p "$TELEGRAM_STATE_DIR"
-  chmod 700 "$TELEGRAM_STATE_DIR" 2>/dev/null || true
+load_resident_libs() {
+  local script_dir
+  local lib_dir=""
+  local lib_file
 
-  if [ -n "$TELEGRAM_BOT_TOKEN" ]; then
-    ( umask 077; printf 'TELEGRAM_BOT_TOKEN=%s\n' "$TELEGRAM_BOT_TOKEN" > "$TELEGRAM_STATE_DIR/.env" )
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  if [ -n "${CLAUDE_RESIDENT_LIB_DIR:-}" ]; then
+    lib_dir="$CLAUDE_RESIDENT_LIB_DIR"
+  elif [ -d "$script_dir/lib/claude-resident" ]; then
+    lib_dir="$script_dir/lib/claude-resident"
+  elif [ -d "$script_dir/../lib/claude-resident" ]; then
+    lib_dir="$(cd "$script_dir/../lib/claude-resident" && pwd)"
   fi
 
-  if [ ! -f "$TELEGRAM_STATE_DIR/access.json" ] && [ -n "$TELEGRAM_NOTIFY_CHAT_ID" ]; then
-    ( umask 077; write_access_json "$TELEGRAM_STATE_DIR/access.json" "$TELEGRAM_NOTIFY_CHAT_ID" ) || return 1
+  if [ -z "$lib_dir" ]; then
+    printf 'ERROR: claude-resident lib directory not found\n' >&2
+    return 1
   fi
-}
 
-send_telegram_text() {
-  local text="${1:?text is required}"
-  local retries="${2:-1}"
-  local attempt=1
-  local http_status=""
-  local payload
-
-  payload=$(build_telegram_payload "$TELEGRAM_NOTIFY_CHAT_ID" "$text") || return 1
-
-  while [ "$attempt" -le "$retries" ]; do
-    http_status=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
-      "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-      -H "Content-Type: application/json" \
-      -d "$payload")
-
-    if [ "$http_status" = "200" ]; then
-      return 0
+  for lib_file in telegram.sh health.sh; do
+    if [ ! -f "$lib_dir/$lib_file" ]; then
+      printf 'ERROR: missing claude-resident lib file: %s\n' "$lib_dir/$lib_file" >&2
+      return 1
     fi
-
-    if [ "$attempt" -lt "$retries" ]; then
-      sleep "$TRIGGER_RETRY_DELAY_SEC"
-    fi
-    attempt=$((attempt + 1))
+    # shellcheck source=/dev/null
+    . "$lib_dir/$lib_file"
   done
-
-  printf '%s\n' "${http_status:-000}"
-  return 1
 }
 
-send_startup_trigger() {
-  # Claude 세션이 안정화되길 기다린 후 __STARTUP__ 트리거 전송
-  sleep "$STARTUP_TRIGGER_DELAY_SEC"
-  if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_NOTIFY_CHAT_ID" ]; then
-    log "[$INSTANCE] WARN: TELEGRAM_BOT_TOKEN 또는 TELEGRAM_NOTIFY_CHAT_ID 없음 — startup 트리거 생략"
-    return
-  fi
-
-  if send_telegram_text "__STARTUP__" "$STARTUP_TRIGGER_RETRIES"; then
-    log "[$INSTANCE] startup 트리거 전송 성공"
-  else
-    log "[$INSTANCE] ERROR: startup 트리거 전송 실패 — 수동으로 __STARTUP__ 전송 필요"
-  fi
-}
+load_resident_libs || exit 1
 
 start() {
   if tmux has-session -t "$SESSION" 2>/dev/null; then
@@ -421,102 +318,6 @@ cleanup_memory() {
   done
 
   log "[$INSTANCE] daily cleanup 완료: deleted=$cleaned skipped=$skipped retention_days=$DAILY_RETENTION_DAYS cutoff=$cutoff"
-}
-
-health() {
-  local checked_at
-  local service_active=false
-  local session_exists_before=false
-  local session_exists_after=""
-  local action=""
-  local reason=""
-  local restart_requested_at=""
-  local restart_exit_code=""
-  local tmux_available=true
-
-  checked_at=$(timestamp_now)
-
-  if ! command -v tmux >/dev/null 2>&1; then
-    tmux_available=false
-  elif tmux has-session -t "$SESSION" 2>/dev/null; then
-    session_exists_before=true
-  fi
-
-  if ! command -v systemctl >/dev/null 2>&1; then
-    action="error"
-    reason="systemctl_unavailable"
-    session_exists_after="$session_exists_before"
-    record_health_state "$checked_at" "$service_active" "$session_exists_before" "$action" "$reason" "$restart_requested_at" "$restart_exit_code" "$session_exists_after" || return 1
-    log "[$INSTANCE] ERROR: health check 실패 — systemctl 없음"
-    return 1
-  fi
-
-  if systemctl --user is-active --quiet "claude-resident@$INSTANCE.service" 2>/dev/null; then
-    service_active=true
-  else
-    action="skip_inactive"
-    reason="service_inactive"
-    session_exists_after="$session_exists_before"
-    record_health_state "$checked_at" "$service_active" "$session_exists_before" "$action" "$reason" "$restart_requested_at" "$restart_exit_code" "$session_exists_after" || return 1
-    log "[$INSTANCE] health check: service inactive — restart 생략"
-    return 0
-  fi
-
-  if [ "$tmux_available" = false ]; then
-    action="error"
-    reason="tmux_unavailable"
-    session_exists_after=false
-    record_health_state "$checked_at" "$service_active" "$session_exists_before" "$action" "$reason" "$restart_requested_at" "$restart_exit_code" "$session_exists_after" || return 1
-    log "[$INSTANCE] ERROR: health check 실패 — tmux 없음"
-    return 1
-  fi
-
-  if [ "$session_exists_before" = true ]; then
-    action="noop"
-    reason="session_present"
-    session_exists_after="$session_exists_before"
-    record_health_state "$checked_at" "$service_active" "$session_exists_before" "$action" "$reason" "$restart_requested_at" "$restart_exit_code" "$session_exists_after" || return 1
-    log "[$INSTANCE] health check: tmux session 정상"
-    return 0
-  fi
-
-  action="restart"
-  reason="session_missing"
-  restart_requested_at=$(timestamp_now)
-  if systemctl --user restart "claude-resident@$INSTANCE.service"; then
-    restart_exit_code=0
-  else
-    restart_exit_code=$?
-  fi
-
-  if tmux has-session -t "$SESSION" 2>/dev/null; then
-    session_exists_after=true
-  else
-    session_exists_after=false
-  fi
-
-  record_health_state "$checked_at" "$service_active" "$session_exists_before" "$action" "$reason" "$restart_requested_at" "$restart_exit_code" "$session_exists_after" || return 1
-  if [ "$restart_exit_code" -eq 0 ] && [ "$session_exists_after" = true ]; then
-    log "[$INSTANCE] health check: tmux session 없음 — 재시작 완료"
-    return 0
-  fi
-
-  log "[$INSTANCE] ERROR: health check 재시작 실패 exit=$restart_exit_code session_after=$session_exists_after"
-  return 1
-}
-
-read_health_state_summary() {
-  local file="${1:?file is required}"
-
-  if command -v jq >/dev/null 2>&1; then
-    jq -r '"action=\(.action) reason=\(.reason) checked_at=\(.checked_at) session_before=\(.session_exists_before) session_after=\(.session_exists_after)"' "$file"
-  elif command -v python3 >/dev/null 2>&1; then
-    python3 -c \
-      'import json,sys; d=json.load(open(sys.argv[1])); b=lambda v: str(v).lower() if isinstance(v, bool) else v; print("action={} reason={} checked_at={} session_before={} session_after={}".format(d.get("action"), d.get("reason"), d.get("checked_at"), b(d.get("session_exists_before")), b(d.get("session_exists_after"))))' \
-      "$file"
-  else
-    printf 'file=%s\n' "$file"
-  fi
 }
 
 check() {
