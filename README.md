@@ -654,7 +654,19 @@ systemctl --user restart omx-bridge
 
 ---
 
-## 11. 파일 목록
+## 11. 개발 검증
+
+```bash
+bash -n claude-resident install.sh tests/resident-behavior.sh
+shellcheck claude-resident install.sh tests/resident-behavior.sh
+tests/resident-behavior.sh
+```
+
+`tests/resident-behavior.sh`는 임시 XDG 디렉토리와 fake `tmux`/`systemctl`/`curl`/`sleep` 명령으로 resident 동작을 검증한다. 실제 systemd user unit, tmux 세션, Telegram API에는 접근하지 않는다.
+
+---
+
+## 12. 파일 목록
 
 ```
 (레포 루트)
@@ -665,6 +677,7 @@ systemctl --user restart omx-bridge
     claude-resident-health@.service    → ~/.config/systemd/user/
     claude-resident-health@.timer      → ~/.config/systemd/user/
     install.sh                         → installs binary + systemd units
+    tests/resident-behavior.sh         → fixture-based behavior test runner
     CLAUDE.md                          → ~/.config/claude-resident/<name>/CLAUDE.md
     memory/
         soul.md.example    → ~/.config/claude-resident/<name>/memory/soul.md
