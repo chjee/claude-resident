@@ -222,7 +222,7 @@ last-active.md는 daily append 성공 후 갱신한다.
 
 ### claude-resident 스크립트
 
-`<name> [start|stop|restart|status|check|health|shutdown|cleanup-memory|logs|attach]` 형식으로 인스턴스별 관리. 전체 코드: `claude-resident`
+`<name> [start|stop|restart|status|check|health|shutdown|cleanup-memory|logs|attach]` 형식으로 인스턴스별 관리. 진입점은 `claude-resident`, Telegram/health helper는 `lib/claude-resident/`에 둔다.
 
 ```
 claude-resident andy start 동작:
@@ -657,8 +657,8 @@ systemctl --user restart omx-bridge
 ## 11. 개발 검증
 
 ```bash
-bash -n claude-resident install.sh tests/resident-behavior.sh
-shellcheck claude-resident install.sh tests/resident-behavior.sh
+bash -n claude-resident install.sh tests/resident-behavior.sh lib/claude-resident/*.sh
+shellcheck claude-resident install.sh tests/resident-behavior.sh lib/claude-resident/*.sh
 tests/resident-behavior.sh
 ```
 
@@ -676,7 +676,8 @@ tests/resident-behavior.sh
     claude-resident-restart@.service   → ~/.config/systemd/user/
     claude-resident-health@.service    → ~/.config/systemd/user/
     claude-resident-health@.timer      → ~/.config/systemd/user/
-    install.sh                         → installs binary + systemd units
+    lib/claude-resident/*.sh           → ~/.local/lib/claude-resident/
+    install.sh                         → installs binary + lib + systemd units
     tests/resident-behavior.sh         → fixture-based behavior test runner
     CLAUDE.md                          → ~/.config/claude-resident/<name>/CLAUDE.md
     memory/

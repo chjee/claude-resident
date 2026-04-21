@@ -306,6 +306,31 @@ test_health_restart_records_state() {
   assert_file_contains "$state_file" '"session_exists_after": true'
 }
 
+test_installed_layout_loads_libs() {
+  write_tmux_not_running
+  local install_root="$TEST_TMP/install"
+  mkdir -p "$install_root/bin" "$install_root/lib/claude-resident"
+  cp "$SCRIPT" "$install_root/bin/claude-resident"
+  cp "$ROOT_DIR"/lib/claude-resident/*.sh "$install_root/lib/claude-resident/"
+  cat > "$TEST_TMP/config/claude-resident/test/.env" <<'EOF'
+TELEGRAM_BOT_TOKEN=fake-token
+TELEGRAM_NOTIFY_CHAT_ID=12345
+EOF
+
+  local output
+  output="$(
+    env \
+      PATH="$TEST_TMP/bin:$BASE_PATH" \
+      TEST_TMP="$TEST_TMP" \
+      XDG_CONFIG_HOME="$TEST_TMP/config" \
+      XDG_STATE_HOME="$TEST_TMP/state" \
+      CLAUDE_BIN="$TEST_TMP/bin/fake-claude" \
+      CLAUDE_RESIDENT_OMX_BRIDGE_ENV_FILE="$TEST_TMP/fallback.env" \
+      "$install_root/bin/claude-resident" test check 2>&1
+  )"
+  assert_contains "installed layout" "$output" "OK   JSON encoder available"
+}
+
 run_test "env priority uses instance .env before fallback" test_env_priority
 run_test "start skips new-session when tmux session exists" test_start_existing_session_does_not_create
 run_test "start returns non-zero when tmux new-session fails" test_start_new_session_failure_is_nonzero
@@ -313,6 +338,7 @@ run_test "start cleans session when pipe-pane fails" test_start_pipe_failure_cle
 run_test "shutdown uses CLAUDE_RESIDENT_SHUTDOWN_WAIT_SEC" test_shutdown_uses_configured_wait
 run_test "cleanup-memory deletes old daily but preserves candidate daily" test_cleanup_memory_preserves_candidates_and_deletes_plain_old_daily
 run_test "health restart branch records state" test_health_restart_records_state
+run_test "installed bin can load ../lib/claude-resident modules" test_installed_layout_loads_libs
 
 printf 'Summary: %s passed, %s failed\n' "$PASS_COUNT" "$FAIL_COUNT"
 [ "$FAIL_COUNT" -eq 0 ]
