@@ -125,6 +125,26 @@ check() {
     _warn "webhook port not configured; MCP defaults may apply"
   fi
 
+  if [ -n "${ENABLE_CLAUDE_CHANNEL:-}" ]; then
+    _ok "omx bridge channel flag: $ENABLE_CLAUDE_CHANNEL"
+    case " ${CLAUDE_RESIDENT_EXTRA_ARGS:-} " in
+      *"--dangerously-load-development-channels"*|*"--channels"*)
+        _ok "Claude channel loading args configured"
+        ;;
+      *)
+        _warn "ENABLE_CLAUDE_CHANNEL set but Claude channel loading args not configured"
+        ;;
+    esac
+  fi
+
+  if [ -n "${BRIDGE_URL:-}" ]; then
+    _ok "bridge url configured: $BRIDGE_URL"
+  fi
+
+  if [ -n "${BRIDGE_CALLBACK_SECRET:-}" ]; then
+    _ok "bridge callback secret configured"
+  fi
+
   local global_telegram_env="${HOME}/.claude/channels/telegram/.env"
   if [ -n "$TELEGRAM_BOT_TOKEN" ] && [ -f "$global_telegram_env" ]; then
     local global_token

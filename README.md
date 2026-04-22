@@ -429,6 +429,12 @@ cat > ~/.config/claude-resident/$NAME/.env << 'EOF'
 TELEGRAM_BOT_TOKEN=<인스턴스_전용_봇_토큰>
 TELEGRAM_NOTIFY_CHAT_ID=<내_텔레그램_chat_id>
 WEBHOOK_PORT=3993
+# 선택: omx-bridge-mcp가 Claude Code channel event를 발행하도록 활성화
+# ENABLE_CLAUDE_CHANNEL=true
+# BRIDGE_URL=http://localhost:3992
+# BRIDGE_CALLBACK_SECRET=<omx-bridge와_동일한_secret>
+# Claude Code channel loading 추가 인자. 공백 기준으로 분리된다.
+# CLAUDE_RESIDENT_EXTRA_ARGS=--dangerously-load-development-channels server:omx-bridge
 # 선택: 기본값은 ~/.config/claude-resident/$NAME/telegram
 # TELEGRAM_STATE_DIR=~/.config/claude-resident/$NAME/telegram
 # 선택: 기본값은 bypassPermissions
@@ -448,6 +454,8 @@ EOF
 > 이 파일이 있으면 `omx-bridge/.env`보다 우선 적용된다.
 > `.env` 값은 `export KEY=value`, 따옴표, CRLF, `KEY = value` 형식을 허용한다. 파싱 로직은 `lib/claude-resident/env.sh`의 `load_instance_env()`에 있다.
 > `WEBHOOK_PORT`는 resident별 omx-bridge MCP 알림 포트를 구분할 때 사용한다.
+> `ENABLE_CLAUDE_CHANNEL=true`만으로는 충분하지 않다. Claude Code 실행 인자에도 channel loading 옵션을 넣어야 하므로 `CLAUDE_RESIDENT_EXTRA_ARGS`를 함께 설정한다.
+> `BRIDGE_CALLBACK_SECRET`은 omx-bridge 서비스와 omx-bridge-mcp 양쪽에서 동일해야 webhook 서명 검증이 통과한다.
 > `TELEGRAM_STATE_DIR`는 Telegram plugin의 `access.json`, `bot.pid`, inbox를 인스턴스별로 분리한다.
 > Telegram API JSON payload와 `access.json` 생성을 위해 `jq` 또는 `python3` 중 하나가 필요하다.
 > `cleanup-memory`의 날짜 계산은 GNU `date`, BSD `date -v`, `python3` 순서로 fallback한다.
@@ -637,9 +645,24 @@ omx-bridge `NOTIFY_MODE=claude` 전환 후 E2E 검증:
 # omx-bridge .env 수정
 NOTIFY_MODE=claude
 CLAUDE_NOTIFY_URL=http://127.0.0.1:3993/notify
+BRIDGE_CALLBACK_SECRET=<resident와_동일한_secret>
+
+# resident 인스턴스 .env 수정
+WEBHOOK_PORT=3993
+ENABLE_CLAUDE_CHANNEL=true
+BRIDGE_URL=http://localhost:3992
+BRIDGE_CALLBACK_SECRET=<omx-bridge와_동일한_secret>
+CLAUDE_RESIDENT_EXTRA_ARGS=--dangerously-load-development-channels server:omx-bridge
 
 systemctl --user restart omx-bridge
+systemctl --user restart claude-resident@$NAME.service
 ```
+
+검증 포인트:
+
+- `claude-resident $NAME check`에서 channel flag, bridge url, callback secret, channel loading args가 OK로 표시된다.
+- `WEBHOOK_PORT`는 resident별로 고유해야 한다. CLI Claude 세션과 resident가 같은 포트를 쓰면 완료 알림이 다른 MCP 프로세스로 들어갈 수 있다.
+- Telegram fallback은 channel wake-up이 실제로 검증될 때까지 유지한다.
 
 ---
 
