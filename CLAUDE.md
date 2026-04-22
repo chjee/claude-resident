@@ -162,12 +162,32 @@ daily 파일을 쓰기 전에는 `memory/.daily.lock` 디렉토리를 생성해 
 
 저장 순서:
 
-1. `mkdir memory/.daily.lock` 성공 확인
-2. `memory/daily/YYYY-MM-DD.md` 생성 또는 append
-3. append 성공 확인
-4. `memory/last-active.md` 갱신
-5. `rmdir memory/.daily.lock`
-6. Telegram 완료 메시지 전송
+daily append 전체를 **하나의 `bash -euo pipefail -c` 블록**으로 실행한다. 각 Bash tool 호출은 독립 shell process이므로 여러 호출로 나누면 owner의 `pid=$$`가 tool 종료 시 이미 죽어 stale 오판의 원인이 된다.
+
+```bash
+bash -euo pipefail -c '
+  mkdir memory/.daily.lock || exit 1
+  trap "rm -f memory/.daily.lock/owner; rmdir memory/.daily.lock 2>/dev/null" EXIT
+  printf "pid=%s\ncreated_at=%s\ncommand=daily-write\n" "$$" "$(date +%FT%T%z)" \
+    > memory/.daily.lock/owner
+  # append 또는 last-active 갱신 실패 시 set -e로 즉시 중단 → EXIT trap이 lock 정리
+  # ... daily append ...
+  # ... last-active 갱신 ...
+  rm -f memory/.daily.lock/owner
+  rmdir memory/.daily.lock
+  trap - EXIT
+'
+```
+
+단계:
+1. `bash -euo pipefail -c` 블록 시작
+2. `mkdir memory/.daily.lock` — 실패 시 즉시 중단 (다른 프로세스가 lock 보유 중)
+3. `trap ... EXIT` 등록 — crash 시 lock 자동 해제
+4. `memory/.daily.lock/owner` 에 `pid=$$`, `created_at=...`, `command=daily-write` 기록
+5. `memory/daily/YYYY-MM-DD.md` 생성 또는 append
+6. `memory/last-active.md` 갱신
+7. `rm -f memory/.daily.lock/owner` + `rmdir memory/.daily.lock` + `trap - EXIT`
+8. Telegram 완료 메시지 전송 (블록 외부)
 
 `memory/last-active.md` 형식:
 
