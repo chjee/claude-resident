@@ -39,6 +39,9 @@ start() {
     "TELEGRAM_STATE_DIR=$TELEGRAM_STATE_DIR"
     "PATH=$PATH"
     ${WEBHOOK_PORT:+"WEBHOOK_PORT=$WEBHOOK_PORT"}
+    ${BRIDGE_URL:+"BRIDGE_URL=$BRIDGE_URL"}
+    ${BRIDGE_CALLBACK_SECRET:+"BRIDGE_CALLBACK_SECRET=$BRIDGE_CALLBACK_SECRET"}
+    ${ENABLE_CLAUDE_CHANNEL:+"ENABLE_CLAUDE_CHANNEL=$ENABLE_CLAUDE_CHANNEL"}
     "$CLAUDE_BIN")
   if [ -d "$WORKSPACE_DIR" ]; then
     claude_cmd+=(--add-dir "$WORKSPACE_DIR")
@@ -46,6 +49,11 @@ start() {
     echo "WARN: workspace 디렉토리 없음 — --add-dir 생략: $WORKSPACE_DIR"
   fi
   claude_cmd+=(--channels "plugin:telegram@claude-plugins-official")
+  if [ -n "${CLAUDE_RESIDENT_EXTRA_ARGS:-}" ]; then
+    # shellcheck disable=SC2206
+    local extra_args=( $CLAUDE_RESIDENT_EXTRA_ARGS )
+    claude_cmd+=("${extra_args[@]}")
+  fi
   claude_cmd+=(--permission-mode "$PERMISSION_MODE")
 
   printf -v claude_cmd_string '%q ' "${claude_cmd[@]}"
@@ -60,6 +68,9 @@ start() {
     -e "CLAUDE_RESIDENT_STATE_DIR=$INSTANCE_STATE_DIR" \
     -e "TELEGRAM_STATE_DIR=$TELEGRAM_STATE_DIR" \
     ${WEBHOOK_PORT:+-e "WEBHOOK_PORT=$WEBHOOK_PORT"} \
+    ${BRIDGE_URL:+-e "BRIDGE_URL=$BRIDGE_URL"} \
+    ${BRIDGE_CALLBACK_SECRET:+-e "BRIDGE_CALLBACK_SECRET=$BRIDGE_CALLBACK_SECRET"} \
+    ${ENABLE_CLAUDE_CHANNEL:+-e "ENABLE_CLAUDE_CHANNEL=$ENABLE_CLAUDE_CHANNEL"} \
     "${claude_cmd_string}" 2>&1); then
     if tmux has-session -t "$SESSION" 2>/dev/null; then
       echo "$INSTANCE 이미 실행 중."

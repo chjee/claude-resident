@@ -319,15 +319,45 @@ test_env_priority() {
 TELEGRAM_BOT_TOKEN=instance-token
 TELEGRAM_NOTIFY_CHAT_ID=12345
 CLAUDE_RESIDENT_PERMISSION_MODE=acceptEdits
+ENABLE_CLAUDE_CHANNEL=true
+BRIDGE_URL=http://localhost:3992
+BRIDGE_CALLBACK_SECRET=instance-secret
+CLAUDE_RESIDENT_EXTRA_ARGS=--dangerously-load-development-channels server:omx-bridge
 EOF
   cat > "$TEST_TMP/fallback.env" <<'EOF'
 TELEGRAM_BOT_TOKEN=fallback-token
 CLAUDE_RESIDENT_PERMISSION_MODE=bypassPermissions
+ENABLE_CLAUDE_CHANNEL=false
 EOF
 
   local output
   output="$(run_resident test check 2>&1)"
-  assert_contains "permission mode" "$output" "OK   permission mode: acceptEdits"
+  assert_contains "permission mode" "$output" "OK   permission mode: acceptEdits" || return 1
+  assert_contains "channel flag" "$output" "OK   omx bridge channel flag: true" || return 1
+  assert_contains "channel args" "$output" "OK   Claude channel loading args configured" || return 1
+  assert_contains "bridge url" "$output" "OK   bridge url configured: http://localhost:3992" || return 1
+  assert_contains "bridge secret" "$output" "OK   bridge callback secret configured"
+}
+
+test_start_passes_omx_channel_env_and_extra_args() {
+  write_tmux_not_running
+  cat > "$TEST_TMP/config/claude-resident/test/.env" <<'EOF'
+TELEGRAM_BOT_TOKEN=instance-token
+TELEGRAM_NOTIFY_CHAT_ID=12345
+WEBHOOK_PORT=3994
+ENABLE_CLAUDE_CHANNEL=true
+BRIDGE_URL=http://localhost:3992
+BRIDGE_CALLBACK_SECRET=instance-secret
+CLAUDE_RESIDENT_EXTRA_ARGS=--dangerously-load-development-channels server:omx-bridge
+EOF
+
+  run_resident test start >/dev/null 2>&1 || return 1
+  assert_file_contains "$TEST_TMP/tmux.calls" "-e ENABLE_CLAUDE_CHANNEL=true" || return 1
+  assert_file_contains "$TEST_TMP/tmux.calls" "-e WEBHOOK_PORT=3994" || return 1
+  assert_file_contains "$TEST_TMP/tmux.calls" "-e BRIDGE_URL=http://localhost:3992" || return 1
+  assert_file_contains "$TEST_TMP/tmux.calls" "-e BRIDGE_CALLBACK_SECRET=instance-secret" || return 1
+  assert_file_contains "$TEST_TMP/tmux.calls" "--dangerously-load-development-channels" || return 1
+  assert_file_contains "$TEST_TMP/tmux.calls" "server:omx-bridge"
 }
 
 test_start_existing_session_does_not_create() {
@@ -533,6 +563,7 @@ EOF
 }
 
 run_test "env priority uses instance .env before fallback" test_env_priority
+run_test "start passes omx channel env and extra Claude args" test_start_passes_omx_channel_env_and_extra_args
 run_test "start skips new-session when tmux session exists" test_start_existing_session_does_not_create
 run_test "start returns non-zero when tmux new-session fails" test_start_new_session_failure_is_nonzero
 run_test "start cleans session when pipe-pane fails" test_start_pipe_failure_cleans_session
