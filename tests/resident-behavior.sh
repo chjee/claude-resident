@@ -207,6 +207,68 @@ acquire_daily_lock
 EOF
 }
 
+run_acquire_daily_lock_then_sigterm() {
+  local case_tmp="$TEST_TMP"
+
+  env \
+  PATH="$case_tmp/bin:$BASE_PATH" \
+  TEST_TMP="$case_tmp" \
+  ROOT_DIR="$ROOT_DIR" \
+  bash <<'EOF'
+set -u
+INSTANCE=test
+CMD=cleanup-memory
+MEMORY_DIR="$TEST_TMP/config/claude-resident/test/memory"
+DAILY_LOCK_DIR="$MEMORY_DIR/.daily.lock"
+LOG_FILE="$TEST_TMP/state/agent.log"
+
+log() {
+  printf '%s\n' "$*"
+}
+
+timestamp_now() {
+  date '+%Y-%m-%dT%H:%M:%S%z'
+}
+
+. "$ROOT_DIR/lib/claude-resident/memory.sh"
+acquire_daily_lock || exit 1
+[ -d "$DAILY_LOCK_DIR" ] || exit 2
+kill -SIGTERM "$$"
+sleep 1
+exit 3
+EOF
+}
+
+run_acquire_daily_lock_then_exit() {
+  local case_tmp="$TEST_TMP"
+
+  env \
+  PATH="$case_tmp/bin:$BASE_PATH" \
+  TEST_TMP="$case_tmp" \
+  ROOT_DIR="$ROOT_DIR" \
+  bash <<'EOF'
+set -u
+INSTANCE=test
+CMD=cleanup-memory
+MEMORY_DIR="$TEST_TMP/config/claude-resident/test/memory"
+DAILY_LOCK_DIR="$MEMORY_DIR/.daily.lock"
+LOG_FILE="$TEST_TMP/state/agent.log"
+
+log() {
+  printf '%s\n' "$*"
+}
+
+timestamp_now() {
+  date '+%Y-%m-%dT%H:%M:%S%z'
+}
+
+. "$ROOT_DIR/lib/claude-resident/memory.sh"
+acquire_daily_lock || exit 1
+[ -d "$DAILY_LOCK_DIR" ] || exit 2
+exit 0
+EOF
+}
+
 write_fake_systemctl_active_restart_creates_session() {
   cat > "$TEST_TMP/bin/systemctl" <<'EOF'
 #!/bin/sh
@@ -409,6 +471,31 @@ test_acquire_daily_lock_times_out_for_fresh_ownerless_lock() {
   assert_file_contains "$TEST_TMP/sleep.calls" "1"
 }
 
+test_acquire_daily_lock_releases_on_sigterm() {
+  local memory_dir="$TEST_TMP/config/claude-resident/test/memory"
+
+  run_acquire_daily_lock_then_sigterm >/dev/null 2>&1
+  local status=$?
+  if [ "$status" -ne 143 ]; then
+    printf 'expected SIGTERM self-termination status 143, got %s\n' "$status" >&2
+    return 1
+  fi
+  [ ! -e "$memory_dir/.daily.lock" ] || {
+    printf 'expected SIGTERM trap to release daily lock\n' >&2
+    return 1
+  }
+}
+
+test_acquire_daily_lock_releases_on_exit() {
+  local memory_dir="$TEST_TMP/config/claude-resident/test/memory"
+
+  run_acquire_daily_lock_then_exit >/dev/null 2>&1 || return 1
+  [ ! -e "$memory_dir/.daily.lock" ] || {
+    printf 'expected EXIT trap to release daily lock\n' >&2
+    return 1
+  }
+}
+
 test_health_restart_records_state() {
   write_fake_systemctl_active_restart_creates_session
   write_tmux_session_file
@@ -454,6 +541,8 @@ run_test "cleanup-memory deletes old daily but preserves candidate daily" test_c
 run_test "cleanup-memory skips deletion when daily lock is held" test_cleanup_memory_skips_when_daily_lock_is_held
 run_test "cleanup-memory recovers stale dead-pid daily lock" test_cleanup_memory_recovers_stale_dead_pid_lock
 run_test "acquire_daily_lock times out for fresh ownerless daily lock" test_acquire_daily_lock_times_out_for_fresh_ownerless_lock
+run_test "acquire_daily_lock releases daily lock on SIGTERM" test_acquire_daily_lock_releases_on_sigterm
+run_test "acquire_daily_lock releases daily lock on EXIT" test_acquire_daily_lock_releases_on_exit
 run_test "health restart branch records state" test_health_restart_records_state
 run_test "installed bin can load ../lib/claude-resident modules" test_installed_layout_loads_libs
 

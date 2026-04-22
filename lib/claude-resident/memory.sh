@@ -77,6 +77,10 @@ acquire_daily_lock() {
     log "[$INSTANCE] ERROR: daily lock owner 기록 실패"
     return 1
   fi
+
+  trap 'release_daily_lock' EXIT
+  trap 'trap - SIGTERM; kill -SIGTERM "$$"' SIGTERM
+  trap 'trap - SIGINT;  kill -SIGINT  "$$"' SIGINT
 }
 
 # 주의: acquire_daily_lock() 성공 후에만 호출할 것.
@@ -87,6 +91,7 @@ release_daily_lock() {
     rm -f "$DAILY_LOCK_DIR/owner"
     rmdir "$DAILY_LOCK_DIR" 2>/dev/null || true
   fi
+  trap - EXIT SIGTERM SIGINT
 }
 
 cleanup_memory() {
