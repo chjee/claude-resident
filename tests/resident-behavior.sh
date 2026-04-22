@@ -49,7 +49,10 @@ assert_file_contains() {
 
 setup_case() {
   TEST_TMP="$(mktemp -d)"
-  mkdir -p "$TEST_TMP/bin" "$TEST_TMP/config/claude-resident/test" "$TEST_TMP/state"
+  mkdir -p "$TEST_TMP/bin" "$TEST_TMP/config/claude-resident/test/memory" "$TEST_TMP/state"
+  printf 'test startup rules\n' > "$TEST_TMP/config/claude-resident/test/CLAUDE.md"
+  printf 'test soul\n' > "$TEST_TMP/config/claude-resident/test/memory/soul.md"
+  printf 'test user\n' > "$TEST_TMP/config/claude-resident/test/memory/user.md"
   cat > "$TEST_TMP/bin/fake-claude" <<'EOF'
 #!/bin/sh
 exit 0

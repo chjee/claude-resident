@@ -7,6 +7,17 @@ start() {
     return
   fi
 
+  for f in soul.md user.md; do
+    [[ -f "$MEMORY_DIR/$f" ]] || {
+      log_event "error" "start_validation" "missing required file: $f"
+      return 1
+    }
+  done
+  [[ -f "$INSTANCE_CONFIG_DIR/CLAUDE.md" ]] || {
+    log_event "error" "start_validation" "missing CLAUDE.md — resident startup 규칙 없이 기동 불가"
+    return 1
+  }
+
   if [ -f "$LOG_FILE" ] && [ "$(stat -c%s "$LOG_FILE" 2>/dev/null || echo 0)" -gt "$LOG_ROTATE_BYTES" ]; then
     mv "$LOG_FILE" "${LOG_FILE}.1"
     log "[$INSTANCE] agent.log rotated (>${LOG_ROTATE_BYTES} bytes)"
@@ -15,10 +26,6 @@ start() {
   if [ ! -x "$CLAUDE_BIN" ]; then
     echo "ERROR: Claude Code 바이너리를 찾지 못함: $CLAUDE_BIN"
     return 1
-  fi
-
-  if [ ! -f "$INSTANCE_CONFIG_DIR/CLAUDE.md" ]; then
-    echo "WARN: $INSTANCE_CONFIG_DIR/CLAUDE.md 없음 — resident startup 규칙이 로드되지 않을 수 있음"
   fi
 
   echo "$INSTANCE 시작 중..."
