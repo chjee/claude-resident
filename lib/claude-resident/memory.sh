@@ -20,22 +20,73 @@ portable_days_ago() {
 acquire_daily_lock() {
   mkdir -p "$MEMORY_DIR"
 
-  if mkdir "$DAILY_LOCK_DIR" 2>/dev/null; then
-    {
-      printf 'pid=%s\n' "$$"
-      printf 'created_at=%s\n' "$(timestamp_now)"
-      printf 'command=%s\n' "$CMD"
-    } > "$DAILY_LOCK_DIR/owner" || true
-    return 0
-  fi
+  local attempts=0
+  while ! mkdir "$DAILY_LOCK_DIR" 2>/dev/null; do
+    local pid; pid=$(grep '^pid=' "$DAILY_LOCK_DIR/owner" 2>/dev/null | cut -d= -f2-)
 
-  log "[$INSTANCE] WARN: daily lock 사용 중 — cleanup-memory 생략: $DAILY_LOCK_DIR"
-  return 1
+    # pid 있고 프로세스 죽었으면 stale
+    if [[ -n "$pid" ]] && ! kill -0 "$pid" 2>/dev/null; then
+      # stale: owner 먼저 제거 후 lock dir 삭제 (owner 있으면 rmdir 실패)
+      rm -f "$DAILY_LOCK_DIR/owner"
+      if rmdir "$DAILY_LOCK_DIR" 2>/dev/null; then
+        continue
+      fi
+      log "[$INSTANCE] WARN: stale daily lock 제거 실패 (권한 문제?) — 재시도"
+      (( attempts++ )); sleep 1
+      [[ $attempts -ge 10 ]] && { log "[$INSTANCE] WARN: daily lock 대기 시간 초과 — skip"; return 1; }
+      continue
+    fi
+
+    # owner 없거나 malformed (pid= 비었음): grace period 적용
+    if [[ ! -f "$DAILY_LOCK_DIR/owner" ]] || [[ -z "$pid" ]]; then
+      local lock_age lock_mtime
+      # GNU stat -c %Y (Linux/systemd 운영 환경 전제; BSD는 stat -f %m)
+      lock_mtime=$(stat -c %Y "$DAILY_LOCK_DIR" 2>/dev/null) || lock_mtime=$(date +%s)
+      lock_age=$(( $(date +%s) - lock_mtime ))
+      if [[ $lock_age -lt 2 ]]; then
+        (( attempts++ )); sleep 1
+        [[ $attempts -ge 10 ]] && { log "[$INSTANCE] WARN: daily lock 대기 시간 초과 — skip"; return 1; }
+        continue
+      fi
+      log "[$INSTANCE] WARN: owner 없는/malformed 오래된 lock 발견 — stale 처리 (age: ${lock_age}s)"
+      rm -f "$DAILY_LOCK_DIR/owner"
+      if rmdir "$DAILY_LOCK_DIR" 2>/dev/null; then
+        continue
+      fi
+      log "[$INSTANCE] WARN: stale daily lock 제거 실패 (권한 문제?) — 재시도"
+      (( attempts++ )); sleep 1
+      [[ $attempts -ge 10 ]] && { log "[$INSTANCE] WARN: daily lock 대기 시간 초과 — skip"; return 1; }
+      continue
+    fi
+
+    (( attempts++ )); sleep 1
+    if [[ $attempts -ge 10 ]]; then
+      log "[$INSTANCE] WARN: daily lock 대기 시간 초과 — skip"
+      return 1
+    fi
+  done
+
+  # owner 작성 실패는 fatal: partial 파일이 생길 수 있으므로 rm -f 후 rmdir
+  if ! {
+    printf 'pid=%s\n' "$$"
+    printf 'created_at=%s\n' "$(timestamp_now)"
+    printf 'command=%s\n' "$CMD"
+  } > "$DAILY_LOCK_DIR/owner"; then
+    rm -f "$DAILY_LOCK_DIR/owner"
+    rmdir "$DAILY_LOCK_DIR" 2>/dev/null || true
+    log "[$INSTANCE] ERROR: daily lock owner 기록 실패"
+    return 1
+  fi
 }
 
+# 주의: acquire_daily_lock() 성공 후에만 호출할 것.
+# lock을 잡지 않은 경로에서 호출되면 다른 프로세스 lock을 실수로 해제할 수 있다.
 release_daily_lock() {
-  rm -f "$DAILY_LOCK_DIR/owner"
-  rmdir "$DAILY_LOCK_DIR" 2>/dev/null || true
+  local owner_pid; owner_pid=$(grep '^pid=' "$DAILY_LOCK_DIR/owner" 2>/dev/null | cut -d= -f2-)
+  if [[ "$owner_pid" == "$$" ]]; then
+    rm -f "$DAILY_LOCK_DIR/owner"
+    rmdir "$DAILY_LOCK_DIR" 2>/dev/null || true
+  fi
 }
 
 cleanup_memory() {
