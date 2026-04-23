@@ -134,6 +134,32 @@ health() {
     return 1
   fi
 
+  # bot.pid 파일 자체가 없는 경우 — 플러그인 정상 종료 후 미재시작 또는 비정상 시작 실패
+  if [ "$session_exists_before" = true ] && [ "$poller_alive" = null ]; then
+    action="restart"
+    reason="poller_missing"
+    restart_requested_at=$(timestamp_now)
+    log "[$INSTANCE] health check: Telegram bot.pid 없음 — 세션 재시작"
+    if systemctl --user restart "claude-resident@$INSTANCE.service"; then
+      restart_exit_code=0
+    else
+      restart_exit_code=$?
+    fi
+    if tmux has-session -t "$SESSION" 2>/dev/null; then
+      session_exists_after=true
+    else
+      session_exists_after=false
+    fi
+    poller_alive=$(check_poller_alive)
+    record_health_state "$checked_at" "$service_active" "$session_exists_before" "$action" "$reason" "$restart_requested_at" "$restart_exit_code" "$session_exists_after" "$poller_alive" || return 1
+    if [ "$restart_exit_code" -eq 0 ] && [ "$session_exists_after" = true ]; then
+      log "[$INSTANCE] health check: poller_missing 재시작 완료"
+      return 0
+    fi
+    log "[$INSTANCE] ERROR: poller_missing 재시작 실패 exit=$restart_exit_code session_after=$session_exists_after"
+    return 1
+  fi
+
   if [ "$session_exists_before" = true ]; then
     action="noop"
     reason="session_present"

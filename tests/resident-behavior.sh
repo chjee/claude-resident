@@ -537,6 +537,17 @@ test_health_restart_records_state() {
   assert_file_contains "$state_file" '"session_exists_after": true'
 }
 
+test_health_poller_missing_restarts() {
+  write_fake_systemctl_active_restart_creates_session
+  write_tmux_always_running
+  # no bot.pid — TELEGRAM_STATE_DIR/bot.pid does not exist
+
+  run_resident test health >/dev/null 2>&1 || return 1
+  local state_file="$TEST_TMP/state/claude-resident/test/health-state.json"
+  assert_file_contains "$state_file" '"action": "restart"' || return 1
+  assert_file_contains "$state_file" '"reason": "poller_missing"' || return 1
+}
+
 test_installed_layout_loads_libs() {
   write_tmux_not_running
   local install_root="$TEST_TMP/install"
@@ -575,6 +586,7 @@ run_test "acquire_daily_lock times out for fresh ownerless daily lock" test_acqu
 run_test "acquire_daily_lock releases daily lock on SIGTERM" test_acquire_daily_lock_releases_on_sigterm
 run_test "acquire_daily_lock releases daily lock on EXIT" test_acquire_daily_lock_releases_on_exit
 run_test "health restart branch records state" test_health_restart_records_state
+run_test "health restarts when session present but bot.pid missing" test_health_poller_missing_restarts
 run_test "installed bin can load ../lib/claude-resident modules" test_installed_layout_loads_libs
 
 printf 'Summary: %s passed, %s failed\n' "$PASS_COUNT" "$FAIL_COUNT"
