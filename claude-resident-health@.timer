@@ -3,7 +3,7 @@ Description=Claude Resident 헬스체크 타이머 (%i)
 
 [Timer]
 OnBootSec=3min
-OnUnitActiveSec=5min
+OnUnitActiveSec=3min
 Persistent=true
 
 [Install]
